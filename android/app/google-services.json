@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "548043523282",
+    "project_id": "shared-calendar-5958a",
+    "storage_bucket": "shared-calendar-5958a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:548043523282:android:357bd818b24b15669e590b",
+        "android_client_info": {
+          "package_name": "com.example.shared_calendar"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD8gv_TPA49cVl5dRdqiINLZfsfKEGRqU8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:548043523282:android:72c0294297ec56c99e590b",
+        "android_client_info": {
+          "package_name": "com.linkup.shared_calendar"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD8gv_TPA49cVl5dRdqiINLZfsfKEGRqU8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
