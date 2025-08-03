@@ -59,7 +59,7 @@ class MyApp extends StatelessWidget {
 
 
       routes: {
-        '/': (context) => AuthScreen(),
+        '/': (context) => AuthLandingScreen(),
         '/createCalendar': (context) => CreateCalendarScreen(),
         '/masterCalendar': (context) => MasterCalendarScreen(),
         '/sharedCalendar': (context) => SharedCalendarScreen(),
