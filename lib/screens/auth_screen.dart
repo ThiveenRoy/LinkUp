@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthLandingScreen extends StatefulWidget {
@@ -62,6 +63,35 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       'tabIndex': 0,
     });
   }
+
+  Future<void> _signInWithGoogle() async {
+    try {
+      final GoogleSignIn googleUser = GoogleSignIn();
+      final GoogleSignInAccount? account = await googleUser.signIn();
+      if (account == null) return; // cancelled
+
+      final GoogleSignInAuthentication auth = await account.authentication;
+
+      final credential = GoogleAuthProvider.credential(
+        accessToken: auth.accessToken,
+        idToken: auth.idToken,
+      );
+
+      await FirebaseAuth.instance.signInWithCredential(credential);
+
+      Navigator.pushNamed(context, '/calendarHome', arguments: {
+        'calendarId': null,
+        'calendarName': 'LinkUp Calendar',
+        'tabIndex': 0,
+      });
+    } catch (e) {
+      print('Google Sign-In failed: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Google Sign-In failed')),
+      );
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -196,7 +226,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
           ),
           const SizedBox(height: 12),
           ElevatedButton(
-            onPressed: () {},
+            onPressed: _signInWithGoogle,
             style: ElevatedButton.styleFrom(
               backgroundColor: Color(0xFFCBDCEB),
               foregroundColor: Colors.black87,
@@ -210,7 +240,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
               children: [
                 Icon(Icons.g_mobiledata),
                 SizedBox(width: 8),
-                Text('Login with Google (coming soon)'),
+                Text('Login with Google'),
               ],
             ),
           ),

@@ -8,7 +8,6 @@ class CalendarHomeScreen extends StatefulWidget {
   final String calendarName;
   final int tabIndex;
   final bool fromInvite;
-  
 
   const CalendarHomeScreen({
     super.key,
@@ -49,7 +48,6 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
     });
   }
 
-
   @override
   void didUpdateWidget(CalendarHomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -80,27 +78,50 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
       child: Scaffold(
         appBar: AppBar(
           automaticallyImplyLeading: false,
-          title: const Text('LinkUp Calendar'),
+          backgroundColor: Theme.of(context).colorScheme.surface,
+          elevation: 1,
+          title: Row(
+            children: [
+              Image.asset(
+                'assets/logo_final.png',
+                height: 32,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'LinkUp Calendar',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                  color: Theme.of(context).textTheme.titleLarge!.color,
+                ),
+              )
+            ],
+          ),
           bottom: TabBar(
             controller: _tabController,
+            indicatorColor: Theme.of(context).colorScheme.primary,
+            labelColor: Theme.of(context).colorScheme.primary,
+            unselectedLabelColor: Theme.of(context).hintColor,
+            labelStyle: const TextStyle(fontWeight: FontWeight.w600),
             tabs: const [
               Tab(icon: Icon(Icons.calendar_today), text: 'Master Calendar'),
               Tab(icon: Icon(Icons.group), text: 'Shared Calendar'),
             ],
           ),
         ),
-       body: TabBarView(
-        controller: _tabController,
-        children: [
-          const MasterCalendarScreen(),
-          SharedCalendarTab(
-            key: _sharedTabKey, // ✅ Add this
-            calendarId: widget.calendarId,
-            calendarName: widget.calendarName,
-            fromInvite: widget.fromInvite,
-          ),
-        ],
-      ),
+        body: TabBarView(
+          controller: _tabController,
+          children: [
+            const MasterCalendarScreen(),
+            SharedCalendarTab(
+              key: _sharedTabKey,
+              calendarId: widget.calendarId,
+              calendarName: widget.calendarName,
+              fromInvite: widget.fromInvite,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -112,7 +133,7 @@ class SharedCalendarTab extends StatefulWidget {
   final bool fromInvite;
 
   const SharedCalendarTab({
-    super.key, // ✅ Add this line
+    super.key,
     this.calendarId,
     this.calendarName,
     this.fromInvite = false,
@@ -121,7 +142,6 @@ class SharedCalendarTab extends StatefulWidget {
   @override
   State<SharedCalendarTab> createState() => _SharedCalendarTabState();
 }
-
 
 class _SharedCalendarTabState extends State<SharedCalendarTab> {
   String? _activeCalendarId;

@@ -29,11 +29,50 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'LinkUp Calendar',
+
+      theme: ThemeData(
+        brightness: Brightness.light,
+        useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFF9F7F7),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFFF9F7F7),
+          elevation: 0.5,
+          iconTheme: IconThemeData(color: Colors.black87),
+          titleTextStyle: TextStyle(
+            color: Colors.black87,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFF121212),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.deepPurple,
+          brightness: Brightness.dark,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF121212),
+          elevation: 0.5,
+          iconTheme: IconThemeData(color: Colors.white),
+          titleTextStyle: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+
+      themeMode: ThemeMode.system, // 🔁 Auto switch based on system settings
+
       initialRoute: '/',
       onGenerateRoute: (settings) {
         final uri = Uri.parse(settings.name ?? '');
 
-        // ✅ Handle calendar invite links like /cal/abc123
         if (uri.pathSegments.length == 2 && uri.pathSegments[0] == 'cal') {
           final sharedLinkId = uri.pathSegments[1];
           return MaterialPageRoute(
@@ -41,7 +80,6 @@ class MyApp extends StatelessWidget {
           );
         }
 
-        // ✅ Handle /calendarHome with arguments
         if (settings.name == '/calendarHome') {
           final args = settings.arguments as Map<String, dynamic>?;
 
@@ -54,18 +92,15 @@ class MyApp extends StatelessWidget {
           );
         }
 
-        return null; // fallback to routes
+        return null;
       },
-
-
       routes: {
         '/': (context) => AuthLandingScreen(),
         '/createCalendar': (context) => CreateCalendarScreen(),
         '/masterCalendar': (context) => MasterCalendarScreen(),
         '/sharedCalendar': (context) => SharedCalendarScreen(),
-        // '/calendar' is handled in onGenerateRoute
-        // '/createEvent' is handled in onGenerateRoute
       },
     );
+
   }
 }

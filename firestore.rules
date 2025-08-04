@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================
+    // 🔧 Helper Function
+    // ===============================
+    function getUserId() {
+      return request.auth != null ? request.auth.uid : request.resource.data.guestId;
+    }
+
+    // ===============================
+    // 📅 Main Calendars
+    // ===============================
+    match /calendars/{calendarId} {
+      
+      // Only members can read
+      allow read: if resource.data.members.hasAny([getUserId()]);
+
+      // Only owner can write to calendar metadata (name, sharing, etc.)
+      allow update, delete: if resource.data.owner == getUserId();
+
+      // Allow calendar creation if user adds themselves as owner + member
+      allow create: if request.resource.data.owner == getUserId()
+        && request.resource.data.members.hasAll([getUserId()]);
+
+      // =========================
+      // 📆 Calendar Events
+      // =========================
+      match /events/{eventId} {
+
+        // Read: allow any calendar member
+        allow read: if getUserId() in resource.data.members;
+
+        // Create: allow if current user is in members
+        allow create: if request.resource.data.creatorId == getUserId()
+          && getUserId() in resource.data.members;
+
+        // Update/Delete: only creator can modify
+        allow update, delete: if resource.data.creatorId == getUserId();
+      }
+    }
+
+    // ===============================
+    // 👤 Guest Metadata Storage
+    // ===============================
+    match /guests/{guestId}/sharedCalendars/{docId} {
+      allow read, write: if guestId == getUserId();
+    }
+
+  }
+}
