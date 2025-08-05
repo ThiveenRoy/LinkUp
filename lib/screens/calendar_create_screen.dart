@@ -15,6 +15,7 @@ class _CreateCalendarScreenState extends State<CreateCalendarScreen> {
   final TextEditingController _nameController = TextEditingController();
   bool allowEdit = true;
   bool _creating = false;
+  
 
   String _generateLinkId() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -29,11 +30,17 @@ class _CreateCalendarScreenState extends State<CreateCalendarScreen> {
     setState(() => _creating = true);
 
     final currentUserId = await getCurrentUserId();
+    final currentUserName = await getCurrentUserName() ?? 'Anonymous';
 
     final docRef = await FirebaseFirestore.instance.collection('calendars').add({
       'name': name,
       'owner': currentUserId,
-      'members': [currentUserId],
+      'members': [
+        {
+          'id': currentUserId,
+          'name': currentUserName,
+        }
+      ],
       'isShared': true,
       'allowEdit': allowEdit,
       'createdAt': Timestamp.now(),
@@ -41,17 +48,20 @@ class _CreateCalendarScreenState extends State<CreateCalendarScreen> {
       'sharedLinkView': _generateLinkId(),
     });
 
-    // Prevent back to /createCalendar
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (_) => CalendarHomeScreen(
+          tabIndex: 1,
           calendarId: docRef.id,
           calendarName: name,
         ),
       ),
     );
   }
+
+
+
 
   @override
   Widget build(BuildContext context) {

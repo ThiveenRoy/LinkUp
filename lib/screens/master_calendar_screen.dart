@@ -68,7 +68,12 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       final calendarId = doc.id;
       final isShared = doc['isShared'] ?? false;
       final calendarName = doc['name'] ?? 'Shared Calendar';
-      final members = List<String>.from(doc['members'] ?? []);
+      final rawMembers = doc['members'] ?? [];
+      final members = rawMembers.map<String>((m) {
+        if (m is String) return m;
+        if (m is Map && m.containsKey('id')) return m['id'] as String;
+        return ''; // fallback to skip invalid
+      }).toList();
 
       if (!members.contains(currentUserId)) continue;
 
@@ -251,6 +256,11 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                   onDaySelected: (selectedDay, focusedDay) {
                     setState(() {
                       _selectedDay = selectedDay;
+                      _focusedDay = focusedDay;
+                    });
+                  },
+                  onPageChanged: (focusedDay) {
+                    setState(() {
                       _focusedDay = focusedDay;
                     });
                   },

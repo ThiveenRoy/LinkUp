@@ -14,27 +14,37 @@ class SharedCalendarList extends StatefulWidget {
 }
 
 class _SharedCalendarListState extends State<SharedCalendarList> {
-  Future<List<Map<String, dynamic>>> fetchJoinedCalendars() async {
+    Future<List<Map<String, dynamic>>> fetchJoinedCalendars() async {
     final user = FirebaseAuth.instance.currentUser;
     final prefs = await SharedPreferences.getInstance();
     final guestId = prefs.getString('guestId');
     final currentId = user?.uid ?? guestId;
 
-    final query = await FirebaseFirestore.instance
-        .collection('calendars')
-        .where('members', arrayContains: currentId)
-        .where('isShared', isEqualTo: true)
-        .get();
+    // Fetch all shared calendars (isShared == true)
+    final allCalendars = await FirebaseFirestore.instance
+    .collection('calendars')
+    .where('isShared', isEqualTo: true)
+    .get();
 
-    return query.docs
-        .map((doc) => {'id': doc.id, 'name': doc['name']})
-        .toList();
+    final joinedCalendars = allCalendars.docs.where((doc) {
+      final members = List<Map<String, dynamic>>.from(
+        (doc['members'] ?? []).map((e) => Map<String, dynamic>.from(e))
+      );
+      return members.any((m) => m['id'] == currentId);
+    }).toList();
+
+    return joinedCalendars.map((doc) => {
+      'id': doc.id,
+      'name': doc['name']
+    }).toList();
+
   }
+
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Shared Calendars')),
+      appBar: AppBar(title: const Text('Shared Calendars'),  automaticallyImplyLeading: false,),
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: fetchJoinedCalendars(),
         builder: (context, snapshot) {

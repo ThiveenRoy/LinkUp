@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -16,35 +17,105 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   bool isLogin = true;
   String? error;
 
+  // 🔁 Check for shared calendar and navigate accordingly
+  Future<void> _handlePostLoginRedirect() async {
+    final prefs = await SharedPreferences.getInstance();
+    final pendingSharedCalendarId = prefs.getString('pendingSharedCalendarId');
+
+    if (pendingSharedCalendarId != null) {
+      await prefs.remove('pendingSharedCalendarId');
+
+      // 🔍 Fetch calendar name
+      final doc = await FirebaseFirestore.instance
+          .collection('calendars')
+          .doc(pendingSharedCalendarId)
+          .get();
+      final calendarName = doc.data()?['name'] ?? 'Shared Calendar';
+
+      // ✅ Redirect to CalendarHomeScreen (tabIndex 1)
+      Navigator.pushNamed(context, '/calendarHome', arguments: {
+        'calendarId': pendingSharedCalendarId,
+        'calendarName': calendarName,
+        'tabIndex': 1,
+        'fromInvite': true,
+      });
+      return;
+    }
+
+    // Default to CalendarHome tab 0
+    Navigator.pushNamed(context, '/calendarHome', arguments: {
+      'calendarId': null,
+      'calendarName': 'LinkUp Calendar',
+      'tabIndex': 0,
+    });
+  }
+
+
   Future<void> _loginOrSignUp() async {
     if (!_formKey.currentState!.validate()) return;
+
     setState(() {
       isLoading = true;
       error = null;
     });
 
     try {
+      final email = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+
       if (isLogin) {
         await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: _emailController.text.trim(),
-          password: _passwordController.text.trim(),
+          email: email,
+          password: password,
         );
       } else {
-        await FirebaseAuth.instance.createUserWithEmailAndPassword(
-          email: _emailController.text.trim(),
-          password: _passwordController.text.trim(),
-        );
+        try {
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
+            email: email,
+            password: password,
+          );
+        } on FirebaseAuthException catch (e) {
+          if (e.code == 'email-already-in-use') {
+            final methods = await FirebaseAuth.instance.fetchSignInMethodsForEmail(email);
+            if (methods.contains('google.com')) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("This email is already registered via Google. Please sign in using Google."),
+                ),
+              );
+              setState(() => isLoading = false);
+              return;
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("Email is already in use. Try Google Sign")),
+              );
+              setState(() => isLoading = false);
+              return;
+            }
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text("Signup Error: ${e.message}")),
+            );
+            setState(() => isLoading = false);
+            return;
+          }
+        }
       }
-      Navigator.pushNamed(context, '/calendarHome', arguments: {
-        'calendarId': null,
-        'calendarName': 'LinkUp Calendar',
-        'tabIndex': 0,
-      });
+
+      // 🔁 Redirect based on shared calendar presence
+      await _handlePostLoginRedirect();
+
+    } on FirebaseAuthException catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Auth Error: ${e.message}")),
+      );
     } catch (e) {
+      print("Unexpected error: $e");
       setState(() => error = isLogin
           ? "Login failed. Please check your credentials."
           : "Sign up failed. Please try again.");
     }
+
     setState(() => isLoading = false);
   }
 
@@ -57,18 +128,15 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       await prefs.setString('guestId', guestId);
     }
 
-    Navigator.pushNamed(context, '/calendarHome', arguments: {
-      'calendarId': null,
-      'calendarName': 'LinkUp Calendar',
-      'tabIndex': 0,
-    });
+    // 🔁 Redirect guest to shared calendar if applicable
+    await _handlePostLoginRedirect();
   }
 
   Future<void> _signInWithGoogle() async {
     try {
       final GoogleSignIn googleUser = GoogleSignIn();
       final GoogleSignInAccount? account = await googleUser.signIn();
-      if (account == null) return; // cancelled
+      if (account == null) return;
 
       final GoogleSignInAuthentication auth = await account.authentication;
 
@@ -79,11 +147,9 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
 
       await FirebaseAuth.instance.signInWithCredential(credential);
 
-      Navigator.pushNamed(context, '/calendarHome', arguments: {
-        'calendarId': null,
-        'calendarName': 'LinkUp Calendar',
-        'tabIndex': 0,
-      });
+      // 🔁 Redirect based on shared calendar presence
+      await _handlePostLoginRedirect();
+
     } catch (e) {
       print('Google Sign-In failed: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -91,7 +157,6 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       );
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -182,15 +247,11 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
               labelText: 'Email',
               border: OutlineInputBorder(),
             ),
-           validator: (value) {
+            validator: (value) {
               final trimmed = value?.trim() ?? '';
-              if (trimmed.isEmpty) {
-                return 'Email is required';
-              }
+              if (trimmed.isEmpty) return 'Email is required';
               final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
-              if (!emailRegex.hasMatch(trimmed)) {
-                return 'Enter a valid email';
-              }
+              if (!emailRegex.hasMatch(trimmed)) return 'Enter a valid email';
               return null;
             },
           ),

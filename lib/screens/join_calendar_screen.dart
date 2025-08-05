@@ -38,8 +38,11 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
         final guestId = prefs.getString('guestId');
         final currentId = user?.uid ?? guestId;
 
-        final members = List<String>.from(data['members'] ?? []);
-        isAlreadyJoined = members.contains(currentId);
+        final members = List<Map<String, dynamic>>.from(
+          (data['members'] ?? []).map((e) => Map<String, dynamic>.from(e))
+        );
+
+        isAlreadyJoined = members.any((m) => m['id'] == currentId);
 
         // ✅ Save edit access status in SharedPreferences
         final canEdit = (data['sharedLinkEdit'] == widget.sharedLinkId);
@@ -58,16 +61,12 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
   }
 
 
+
   Future<void> joinCalendar() async {
     final user = FirebaseAuth.instance.currentUser;
     final prefs = await SharedPreferences.getInstance();
     final guestId = prefs.getString('guestId');
     final currentId = user?.uid ?? guestId;
-
-    print("📌 joinCalendar called");
-    print("calendarId: $calendarId");
-    print("guestId: $guestId");
-    print("user uid: ${user?.uid}");
 
     if (calendarId == null || currentId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -81,8 +80,14 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
           FirebaseFirestore.instance.collection('calendars').doc(calendarId);
 
       // Add user to members
+      // Add user with id + name
       await calendarRef.update({
-        'members': FieldValue.arrayUnion([currentId])
+        'members': FieldValue.arrayUnion([
+          {
+            'id': currentId,
+            'name': user == null ? 'Anonymous' : (user.displayName ?? user.email ?? 'User'),
+          }
+        ])
       });
 
       // Save guest metadata
@@ -176,9 +181,11 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
                       ),
                       if (user == null)
                         TextButton(
-                          onPressed: () {
-                            Navigator.pushNamedAndRemoveUntil(
-                                context, '/', (_) => false);
+                          onPressed: () async {
+                            final prefs = await SharedPreferences.getInstance();
+                            await prefs.setString('pendingSharedCalendarId', calendarId!);
+
+                            Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
                           },
                           child: const Text("Log in instead"),
                         ),

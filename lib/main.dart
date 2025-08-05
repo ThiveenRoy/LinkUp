@@ -98,7 +98,14 @@ class MyApp extends StatelessWidget {
         '/': (context) => AuthLandingScreen(),
         '/createCalendar': (context) => CreateCalendarScreen(),
         '/masterCalendar': (context) => MasterCalendarScreen(),
-        '/sharedCalendar': (context) => SharedCalendarScreen(),
+        '/sharedCalendar': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
+          return SharedCalendarScreen(
+            calendarId: args?['calendarId'],
+            calendarName: args?['calendarName'],
+            sharedLinkId: args?['sharedLinkId'],
+          );
+        },
       },
     );
 

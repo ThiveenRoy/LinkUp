@@ -77,7 +77,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
       },
       child: Scaffold(
         appBar: AppBar(
-          automaticallyImplyLeading: false,
+          automaticallyImplyLeading: true,
           backgroundColor: Theme.of(context).colorScheme.surface,
           elevation: 1,
           title: Row(

@@ -20,3 +20,14 @@ Future<String> getCurrentUserId() async {
   }
   return guestId;
 }
+
+Future<String?> getCurrentUserName() async {
+    final user = FirebaseAuth.instance.currentUser;
+    final prefs = await SharedPreferences.getInstance();
+
+    if (user != null) {
+      return user.email ?? 'User';
+    } else {
+      return prefs.getString('guestName') ?? 'Anonymous';
+    }
+  }

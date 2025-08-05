@@ -1,7 +1,11 @@
+// 🔄 Full updated SharedCalendarScreen with UI synced from MasterCalendarScreen
+
+import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../utils/guest_helper.dart';
@@ -11,8 +15,9 @@ class SharedCalendarScreen extends StatefulWidget {
   final String? calendarName;
   final String? sharedLinkId;
   final VoidCallback? onBackToList;
+  
 
-  const SharedCalendarScreen({super.key, this.calendarId, this.calendarName,this.sharedLinkId,this.onBackToList,});
+  const SharedCalendarScreen({super.key, this.calendarId, this.calendarName, this.sharedLinkId, this.onBackToList});
 
   @override
   State<SharedCalendarScreen> createState() => _SharedCalendarScreenState();
@@ -21,27 +26,50 @@ class SharedCalendarScreen extends StatefulWidget {
 class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
   late Future<String> _userIdFuture;
   DateTime _focusedDay = DateTime.now();
-  DateTime? _selectedDay;
+  DateTime _selectedDay = DateTime.now();
   Map<DateTime, List<Map<String, dynamic>>> _eventsByDay = {};
+  Map<String, Color> _eventColors = {};
   String? _currentUserId;
   Map<String, dynamic>? _calendarData;
   bool _canEdit = false;
+  List<Map<String, String>> _participants = [];
+
+  final Color bgColor = const Color(0xFFF9F7F7);
+  final Color lightCard = const Color(0xFFDBE2EF);
+  final Color buttonColor = const Color(0xFF3F72AF);
+  final Color textDark = const Color(0xFF112D4E);
 
   @override
   void initState() {
     super.initState();
     _userIdFuture = getCurrentUserId();
-    _selectedDay = _focusedDay;
-    _loadPermissions();
-
     _userIdFuture.then((id) {
       _currentUserId = id;
       if (widget.calendarId != null) {
-        _loadEvents();
+        _loadPermissions();
         _loadCalendarDetails();
+        _loadEvents();
+        _loadMembers();
       }
     });
   }
+
+  Future<void> _loadMembers() async {
+    final doc = await FirebaseFirestore.instance.collection('calendars').doc(widget.calendarId).get();
+    final data = doc.data();
+    if (data == null) return;
+
+    List<dynamic> members = data['members'] ?? [];
+    setState(() {
+      _participants = members.map<Map<String, String>>((e) {
+        return {
+          'id': e['id'] ?? '',
+          'name': e['name'] ?? 'Anonymous',
+        };
+      }).toList();
+    });
+  }
+
 
   Future<void> _loadPermissions() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -49,19 +77,26 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     final guestId = prefs.getString('guestId');
     final currentId = user?.uid ?? guestId;
 
-    final doc = await FirebaseFirestore.instance
-        .collection('calendars')
-        .doc(widget.calendarId)
-        .get();
-
+    final doc = await FirebaseFirestore.instance.collection('calendars').doc(widget.calendarId).get();
     final data = doc.data();
-    if (data == null) return;
+    if (data == null || currentId == null) return;
 
     final ownerId = data['owner'];
     final allowEdit = data['allowEdit'] ?? false;
-
     final isOwner = currentId == ownerId;
     final hasGuestEditAccess = prefs.getBool('editAccess_${widget.calendarId}') ?? false;
+
+    // === 🔁 Convert members list and check if current user exists ===
+    final members = List<Map<String, dynamic>>.from(data['members'] ?? []);
+    final isAlreadyMember = members.any((m) => m['id'].toString() == currentId.toString());
+
+    if (!isAlreadyMember) {
+      members.add({'id': currentId, 'name': user?.email ?? 'Anonymous'});
+      await FirebaseFirestore.instance.collection('calendars').doc(widget.calendarId).update({
+        'members': members
+      });
+    }
+
 
     setState(() {
       _canEdit = isOwner || (allowEdit && hasGuestEditAccess);
@@ -79,54 +114,246 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
   }
 
   void _loadEvents() async {
+    final random = Random();
     if (widget.calendarId == null) return;
 
-    final eventsRef = FirebaseFirestore.instance
-        .collection('calendars')
-        .doc(widget.calendarId)
-        .collection('events');
+    final eventsRef = FirebaseFirestore.instance.collection('calendars').doc(widget.calendarId).collection('events');
 
     try {
       final query = await eventsRef.get();
-
       final tempEvents = <DateTime, List<Map<String, dynamic>>>{};
+      final tempColors = <String, Color>{};
+
+      final calendarSnap = await FirebaseFirestore.instance.collection('calendars').doc(widget.calendarId).get();
+      final calendarData = calendarSnap.data();
+      final calendarName = calendarData?['name'] ?? 'Shared Calendar';
+      final ownerId = calendarData?['owner'];
 
       for (var doc in query.docs) {
         final data = doc.data();
-        if (data.containsKey('startTime')) {
-          final startTime = (data['startTime'] as Timestamp).toDate();
-          final dateOnly = DateTime(startTime.year, startTime.month, startTime.day);
-          final calendarSnap = await FirebaseFirestore.instance
-              .collection('calendars')
-              .doc(widget.calendarId)
-              .get();
+        final startTime = (data['startTime'] as Timestamp).toDate();
+        final endTime = (data['endTime'] as Timestamp).toDate();
+        final normalizedEnd = DateTime(endTime.year, endTime.month, endTime.day, 23, 59, 59);
 
-          final calendarData = calendarSnap.data();
-          final calendarName = calendarData?['name'] ?? 'Shared';
-          final ownerId = calendarData?['owner'];
+        final title = ownerId != _currentUserId ? '${data['title']} ($calendarName)' : data['title'];
 
-          final isFromOther = ownerId != _currentUserId;
+        final color = Color.fromARGB(255, random.nextInt(200), random.nextInt(200), random.nextInt(200));
+        tempColors[doc.id] = color;
 
-          tempEvents.putIfAbsent(dateOnly, () => []).add({
-            ...data,
-            'id': doc.id,
-            'calendarName': isFromOther ? calendarName : '',
-          });
+        for (DateTime d = startTime; !d.isAfter(normalizedEnd); d = d.add(const Duration(days: 1))) {
+          final dateOnly = DateTime(d.year, d.month, d.day);
+          tempEvents[dateOnly] ??= [];
+          tempEvents[dateOnly]!.add({...data, 'id': doc.id, 'calendarId': widget.calendarId, 'title': title});
         }
       }
 
       setState(() {
         _eventsByDay = tempEvents;
+        _eventColors = tempColors;
       });
-    } catch (e) {
-      setState(() {
-        _eventsByDay = {}; // still allow calendar to render
-      });
+    } catch (_) {
+      setState(() => _eventsByDay = {});
     }
   }
 
-  List<Map<String, dynamic>> _getEventsForDay(DateTime day) {
-    return _eventsByDay[DateTime(day.year, day.month, day.day)] ?? [];
+  List<Map<String, dynamic>> _getEventsForDay(DateTime day) => _eventsByDay[DateTime(day.year, day.month, day.day)] ?? [];
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.calendarId == null) {
+      return const Scaffold(body: Center(child: Text("No calendar selected.")));
+    }
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (widget.onBackToList != null) {
+              widget.onBackToList!(); // Navigate back to calendar list
+            }
+          },
+        ),
+        title: Text(widget.calendarName ?? 'Shared Calendar'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: _participants.take(3).map((user) {
+                final name = user['name'] ?? 'Anonymous';
+                final id = user['id'] ?? '';
+                final isOwner = id == _calendarData?['owner'];
+                final isGuest = name.toLowerCase().contains('anonymous');
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Tooltip(
+                    message: isOwner ? '$name (Owner)' : name,
+                    child: CircleAvatar(
+                      radius: 12,
+                      backgroundColor: isGuest ? Colors.grey[400] : buttonColor,
+                      child: Text(
+                        name.substring(0, 1).toUpperCase(),
+                        style: const TextStyle(fontSize: 12, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          if (_calendarData != null && _calendarData!['owner'] == _currentUserId)
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: TextButton.icon(
+                icon: const Icon(Icons.share, size: 18),
+                label: const Text('Collaborative Calendar'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.deepPurple,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                onPressed: () => _showShareModal(widget.calendarId!),
+              ),
+            ),
+        ],
+      ),
+
+      body: Column(
+        children: [
+          TableCalendar(
+            firstDay: DateTime.utc(2000),
+            lastDay: DateTime.utc(2100),
+            focusedDay: _focusedDay,
+            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+            onDaySelected: (selected, focused) {
+              setState(() {
+                _selectedDay = selected;
+                _focusedDay = focused;
+              });
+            },
+            onPageChanged: (focusedDay) => setState(() => _focusedDay = focusedDay),
+            eventLoader: _getEventsForDay,
+            headerStyle: HeaderStyle(
+              formatButtonVisible: false,
+              titleCentered: true,
+              titleTextStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textDark),
+              headerPadding: const EdgeInsets.symmetric(vertical: 8),
+            ),
+            calendarBuilders: CalendarBuilders(
+              headerTitleBuilder: (context, day) => Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  splashColor: Colors.transparent,
+                  highlightColor: Colors.transparent,
+                  hoverColor: Colors.transparent,
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: _focusedDay,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2100),
+                      initialDatePickerMode: DatePickerMode.year,
+                      initialEntryMode: DatePickerEntryMode.calendarOnly,
+                    );
+                    if (picked != null) setState(() => _focusedDay = _selectedDay = picked);
+                  },
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.calendar_today, size: 20, color: textDark),
+                      const SizedBox(width: 6),
+                      Text(
+                        DateFormat('MMMM yyyy').format(_focusedDay),
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textDark),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              markerBuilder: (context, date, events) {
+                if (events.isEmpty) return const SizedBox();
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: events.map((e) {
+                    final event = e as Map<String, dynamic>;
+                    final color = _eventColors[event['id']] ?? Colors.purple;
+                    return Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 0.5, vertical: 1.5),
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                    );
+                  }).toList(),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Your schedule for ${_selectedDay.day}-${_selectedDay.month}-${_selectedDay.year}',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: buttonColor),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          if (_canEdit)
+            Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _addEventDialog,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add Event'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: lightCard,
+                      foregroundColor: textDark,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Expanded(
+            child: _getEventsForDay(_selectedDay).isEmpty
+                ? const Center(child: Text("No events found."))
+                : ListView(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    children: _getEventsForDay(_selectedDay).map((event) {
+                      return Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: lightCard,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: const [BoxShadow(blurRadius: 4, color: Colors.black12)],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(event['title'] ?? '', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textDark)),
+                            if (event['calendarName'] != null && event['calendarName'].toString().isNotEmpty)
+                              Text(event['calendarName'], style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: textDark.withOpacity(0.7))),
+                            const SizedBox(height: 4),
+                            Text(event['description'] ?? '', style: TextStyle(color: textDark.withOpacity(0.8))),
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                if (_canEdit) TextButton(onPressed: () => _editEvent(event), child: const Text('Edit')),
+                                if (_canEdit) TextButton(onPressed: () => _deleteEvent(event), child: const Text('Delete')),
+                              ],
+                            )
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+          )
+        ],
+      ),
+    );
   }
 
   void _showShareModal(String calendarId) async {
@@ -208,105 +435,10 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     );
   }
 
-
-      @override
-    Widget build(BuildContext context) {
-      if (widget.calendarId != null) {
-        return Scaffold(
-          appBar: AppBar(
-            leading: widget.onBackToList != null
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: widget.onBackToList,
-              )
-            : null,
-            title: Text(widget.calendarName ?? 'Shared Calendar'),
-            actions: [
-              if (_canEdit)
-                IconButton(
-                  icon: const Icon(Icons.add),
-                  onPressed: _addEventDialog,
-                ),
-              if (_calendarData != null && _calendarData!['owner'] == _currentUserId)
-                IconButton(
-                  icon: const Icon(Icons.share),
-                  onPressed: () => _showShareModal(widget.calendarId!),
-                ),
-            ],
-          ),
-          body: Column(
-            children: [
-              TableCalendar(
-                firstDay: DateTime(2000),
-                lastDay: DateTime(2100),
-                focusedDay: _focusedDay,
-                selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-                onDaySelected: (selected, focused) {
-                  setState(() {
-                    _selectedDay = selected;
-                    _focusedDay = focused;
-                  });
-                },
-                eventLoader: _getEventsForDay,
-                calendarStyle: const CalendarStyle(
-                  markerDecoration: BoxDecoration(color: Colors.purple, shape: BoxShape.circle),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Events On: ${_selectedDay!.toLocal().toString().split(' ')[0]}',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: _getEventsForDay(_selectedDay!).isEmpty
-                    ? const Center(child: Text("No events found."))
-                    : ListView(
-                        children: _getEventsForDay(_selectedDay!).map((event) {
-                          return ListTile(
-                            title: Text(
-                              (event['calendarName'] != null &&
-                                      event['calendarName'].toString().isNotEmpty)
-                                  ? '${event['title']} (${event['calendarName']})'
-                                  : event['title'],
-                            ),
-                            subtitle: Text((event['startTime'] as Timestamp).toDate().toString()),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (_canEdit)
-                                  IconButton(
-                                    icon: const Icon(Icons.edit),
-                                    onPressed: () => _editEvent(event),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete),
-                                    onPressed: () => _deleteEvent(event),
-                                  ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      ),
-              ),
-            ],
-          ),
-        );
-      }
-
-      // ✅ Fallback return if calendarId is null
-      return const Scaffold(
-        body: Center(
-          child: Text("No calendar selected."),
-        ),
-      );
-    }
-
-
   Future<void> _addEventDialog() async {
     final titleController = TextEditingController();
     final descriptionController = TextEditingController();
-    DateTime startTime = _selectedDay ?? DateTime.now();
+    DateTime startTime = _selectedDay;
     DateTime endTime = startTime;
 
     await showDialog(
