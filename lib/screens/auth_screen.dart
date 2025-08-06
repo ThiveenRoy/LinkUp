@@ -3,13 +3,21 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 class AuthLandingScreen extends StatefulWidget {
   @override
   _AuthLandingScreenState createState() => _AuthLandingScreenState();
+  
 }
 
 class _AuthLandingScreenState extends State<AuthLandingScreen> {
+   @override
+    void initState() {
+      super.initState();
+      _checkCurrentIdentity();
+    }
+
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -49,6 +57,20 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       'tabIndex': 0,
     });
   }
+
+  void _checkCurrentIdentity() async {
+      final user = FirebaseAuth.instance.currentUser;
+      final prefs = await SharedPreferences.getInstance();
+      final guestId = prefs.getString('guestId');
+
+      if (user != null) {
+        print("👤 Logged in user: ${user.uid}");
+      } else if (guestId != null) {
+        print("👤 Guest ID in SharedPrefs: $guestId");
+      } else {
+        print("🆕 No user found, will generate guest on continue");
+      }
+    }
 
 
   Future<void> _loginOrSignUp() async {
@@ -102,6 +124,10 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
         }
       }
 
+      final prefs = await SharedPreferences.getInstance();
+      final guestId = prefs.getString('guestId');
+      print("👤 Retained guest ID after login: $guestId");
+
       // 🔁 Redirect based on shared calendar presence
       await _handlePostLoginRedirect();
 
@@ -121,14 +147,27 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
 
   Future<void> _continueAsGuest() async {
     final prefs = await SharedPreferences.getInstance();
-    String? guestId = prefs.getString('guestId');
+    final currentUser = FirebaseAuth.instance.currentUser;
 
-    if (guestId == null) {
-      guestId = DateTime.now().millisecondsSinceEpoch.toString();
-      await prefs.setString('guestId', guestId);
+    // 🔒 Don't allow guest if user is still signed in
+    if (currentUser != null) {
+      print("⚠️ Cannot continue as guest. Firebase user still signed in: ${currentUser.uid}");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("You're already signed in. Please logout first.")),
+      );
+      return;
     }
 
-    // 🔁 Redirect guest to shared calendar if applicable
+    // ✅ Only create new guest ID if not exists
+    String? guestId = prefs.getString('guestId');
+    if (guestId == null) {
+      guestId = const Uuid().v4();
+      await prefs.setString('guestId', guestId);
+      print("🆕 Guest session started with ID: $guestId");
+    } else {
+      print("♻️ Reusing existing guest ID: $guestId");
+    }
+
     await _handlePostLoginRedirect();
   }
 
@@ -147,6 +186,9 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
 
       await FirebaseAuth.instance.signInWithCredential(credential);
 
+      final prefs = await SharedPreferences.getInstance();
+      final guestId = prefs.getString('guestId');
+      print("👤 Retained guest ID after login: $guestId");
       // 🔁 Redirect based on shared calendar presence
       await _handlePostLoginRedirect();
 

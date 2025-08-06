@@ -1,12 +1,13 @@
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_calendar/screens/join_calendar_screen.dart';
 import 'package:shared_calendar/screens/shared_calendar_screen.dart';
-import 'package:shared_calendar/utils/guest_helper.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_options.dart';
 
 import 'screens/auth_screen.dart';
-import 'screens/calendar_create_screen.dart';
 import 'screens/calendar_home_screen.dart';
 import 'screens/master_calendar_screen.dart';
 
@@ -16,13 +17,22 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  await getCurrentUserId();
-  runApp(MyApp());
+  String initialRoute = '/'; // Default route
 
+  final prefs = await SharedPreferences.getInstance();
+  final firebaseUser = FirebaseAuth.instance.currentUser;
+  final guestId = prefs.getString('guestId');
+
+  if (firebaseUser != null || guestId != null) {
+    initialRoute = '/calendarHome';
+  }
+
+  runApp(MyApp(initialRoute: initialRoute));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final String initialRoute;
+  const MyApp({super.key, required this.initialRoute});
 
   @override
   Widget build(BuildContext context) {
@@ -47,29 +57,8 @@ class MyApp extends StatelessWidget {
         ),
       ),
 
-      darkTheme: ThemeData(
-        brightness: Brightness.dark,
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.dark,
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF121212),
-          elevation: 0.5,
-          iconTheme: IconThemeData(color: Colors.white),
-          titleTextStyle: TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
+      initialRoute: initialRoute,
 
-      themeMode: ThemeMode.system, // 🔁 Auto switch based on system settings
-
-      initialRoute: '/',
       onGenerateRoute: (settings) {
         final uri = Uri.parse(settings.name ?? '');
 
@@ -94,9 +83,9 @@ class MyApp extends StatelessWidget {
 
         return null;
       },
+
       routes: {
         '/': (context) => AuthLandingScreen(),
-        '/createCalendar': (context) => CreateCalendarScreen(),
         '/masterCalendar': (context) => MasterCalendarScreen(),
         '/sharedCalendar': (context) {
           final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
@@ -108,6 +97,5 @@ class MyApp extends StatelessWidget {
         },
       },
     );
-
   }
 }

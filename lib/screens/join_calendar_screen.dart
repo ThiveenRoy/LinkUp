@@ -282,38 +282,39 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
                             ),
                           ),
                         ),
-                        if (user == null)
-                          const SizedBox(height: 12), // spacing between buttons
-                        OutlinedButton(
-                          onPressed: () async {
-                            final prefs = await SharedPreferences.getInstance();
-                            await prefs.setString(
-                              'pendingSharedCalendarId',
-                              calendarId!,
-                            );
-                            Navigator.pushNamedAndRemoveUntil(
-                              context,
-                              '/',
-                              (_) => false,
-                            );
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF3F72AF),
-                            side: const BorderSide(color: Color(0xFF3F72AF)),
-                            backgroundColor: Colors.white,
-                            minimumSize: const Size.fromHeight(48),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                        if (user == null) ...[
+                          const SizedBox(height: 12),
+                          OutlinedButton(
+                            onPressed: () async {
+                              final prefs = await SharedPreferences.getInstance();
+                              await prefs.setString(
+                                'pendingSharedCalendarId',
+                                calendarId!,
+                              );
+                              Navigator.pushNamedAndRemoveUntil(
+                                context,
+                                '/',
+                                (_) => false,
+                              );
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF3F72AF),
+                              side: const BorderSide(color: Color(0xFF3F72AF)),
+                              backgroundColor: Colors.white,
+                              minimumSize: const Size.fromHeight(48),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text(
+                              "Log in instead",
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF3F72AF),
+                              ),
                             ),
                           ),
-                          child: const Text(
-                            "Log in instead",
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF3F72AF),
-                            ),
-                          ),
-                        ),
+                        ],
                       ],
                     ],
                   ),

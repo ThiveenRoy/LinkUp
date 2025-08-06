@@ -1,4 +1,6 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'master_calendar_screen.dart';
 import 'shared_calendar_screen.dart';
 import 'shared_calendar_list.dart'; // Don't forget this!
@@ -77,7 +79,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
       },
       child: Scaffold(
         appBar: AppBar(
-          automaticallyImplyLeading: true,
+          automaticallyImplyLeading: false,
           backgroundColor: Theme.of(context).colorScheme.surface,
           elevation: 1,
           title: Row(
@@ -98,6 +100,36 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
               )
             ],
           ),
+          actions: [
+            TextButton.icon(
+              icon: const Icon(Icons.logout, color: Colors.redAccent),
+              label: const Text(
+                'Logout',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              onPressed: () async {
+                final user = FirebaseAuth.instance.currentUser;
+
+                if (user != null) {
+                  await FirebaseAuth.instance.signOut();
+                  print("🔒 Firebase user signed out.");
+                  // DO NOT remove guestId — we want to preserve it
+                }
+
+                final prefs = await SharedPreferences.getInstance();
+                final guestId = prefs.getString('guestId');
+                print("👤 Guest ID still in SharedPreferences: $guestId");
+
+                if (context.mounted) {
+                  Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+                }
+              },
+            ),
+          ],
+
           bottom: TabBar(
             controller: _tabController,
             indicatorColor: Theme.of(context).colorScheme.primary,
@@ -110,6 +142,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
             ],
           ),
         ),
+
         body: TabBarView(
           controller: _tabController,
           children: [

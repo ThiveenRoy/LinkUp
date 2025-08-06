@@ -77,6 +77,33 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     });
   }
 
+  Future<bool> getSyncToMasterPreference(
+    String calendarId,
+    String userId,
+  ) async {
+    final doc =
+        await FirebaseFirestore.instance
+            .collection('calendars')
+            .doc(calendarId)
+            .collection('memberPrefs')
+            .doc(userId)
+            .get();
+    return doc.data()?['syncToMaster'] ?? false;
+  }
+
+  Future<void> setSyncToMasterPreference(
+    String calendarId,
+    String userId,
+    bool value,
+  ) async {
+    await FirebaseFirestore.instance
+        .collection('calendars')
+        .doc(calendarId)
+        .collection('memberPrefs')
+        .doc(userId)
+        .set({'syncToMaster': value}, SetOptions(merge: true));
+  }
+
   Future<void> _loadPermissions() async {
     final user = FirebaseAuth.instance.currentUser;
     final prefs = await SharedPreferences.getInstance();
@@ -527,12 +554,12 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                       suffixIcon: IconButton(
                         icon: const Icon(Icons.copy),
                         onPressed: () {
-                          Clipboard.setData(
-                            ClipboardData(text: linkController.text),
-                          );
+                          Clipboard.setData(ClipboardData(text: linkController.text));
+                          Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text('Link copied to clipboard'),
+                              duration: Duration(seconds: 5),
                             ),
                           );
                         },
@@ -651,7 +678,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         title: Text(
-                          DateFormat('d-M-yyyy').format(selectedStart),
+                          DateFormat('dd-MM-yyyy').format(selectedStart),
                         ),
                         trailing: Icon(
                           Icons.calendar_today,
@@ -678,7 +705,9 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                       ),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: Text(DateFormat('d-M-yyyy').format(selectedEnd)),
+                        title: Text(
+                          DateFormat('dd-MM-yyyy').format(selectedEnd),
+                        ),
                         trailing: Icon(
                           Icons.calendar_today,
                           color: buttonColor,
@@ -770,6 +799,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
       'endTime': Timestamp.fromDate(end),
       'creatorId': _currentUserId,
       'createdAt': Timestamp.now(),
+      'lastUpdated': Timestamp.now(),
     };
 
     final eventsRef = FirebaseFirestore.instance
@@ -784,6 +814,11 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
       // 🔄 Update existing event
       await eventsRef.doc(event['id']).update(eventData);
     }
+
+    await FirebaseFirestore.instance
+        .collection('calendars')
+        .doc(widget.calendarId)
+        .update({'lastUpdatedAt': Timestamp.now()});
 
     Navigator.pop(context); // Close dialog
     _loadEvents(); // Refresh event list
@@ -963,6 +998,11 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                             'updatedBy': _currentUserId,
                           });
 
+                      await FirebaseFirestore.instance
+                          .collection('calendars')
+                          .doc(widget.calendarId)
+                          .update({'lastUpdatedAt': Timestamp.now()});
+
                       Navigator.pop(context);
                       _loadEvents();
                     },
@@ -1009,5 +1049,10 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
           .delete();
       _loadEvents();
     }
+
+    await FirebaseFirestore.instance
+        .collection('calendars')
+        .doc(widget.calendarId)
+        .update({'lastUpdatedAt': Timestamp.now()}); // 🔁 added here
   }
 }
