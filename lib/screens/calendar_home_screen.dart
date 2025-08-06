@@ -111,22 +111,37 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
                 ),
               ),
               onPressed: () async {
-                final user = FirebaseAuth.instance.currentUser;
+                final prefs = await SharedPreferences.getInstance();
+                final guestId = prefs.getString('guestId'); // backup guestId
 
+                final user = FirebaseAuth.instance.currentUser;
                 if (user != null) {
                   await FirebaseAuth.instance.signOut();
                   print("🔒 Firebase user signed out.");
-                  // DO NOT remove guestId — we want to preserve it
+
+                  // Force clear persistent session on web
+                  try {
+                    await FirebaseAuth.instance.setPersistence(Persistence.NONE);
+                    print("🧹 Persistence set to NONE");
+                  } catch (e) {
+                    print("⚠️ Could not set persistence: $e");
+                  }
                 }
 
-                final prefs = await SharedPreferences.getInstance();
-                final guestId = prefs.getString('guestId');
-                print("👤 Guest ID still in SharedPreferences: $guestId");
+                // ❌ Remove hasContinuedAsGuest so app doesn't redirect on refresh
+                await prefs.remove('hasContinuedAsGuest');
+
+                // ✅ Re-store guestId so it persists silently (optional)
+                if (guestId != null) {
+                  await prefs.setString('guestId', guestId);
+                  print("👤 Guest ID restored after clearing prefs");
+                }
 
                 if (context.mounted) {
                   Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
                 }
-              },
+              }
+
             ),
           ],
 

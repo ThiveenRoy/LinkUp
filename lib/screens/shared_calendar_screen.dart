@@ -523,8 +523,9 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     }
 
     bool allowEdit = data['allowEdit'] ?? false;
-    String editLink = 'http://localhost:5000/#/cal/${data['sharedLinkEdit']}';
-    String viewLink = 'http://localhost:5000/#/cal/${data['sharedLinkView']}';
+    String editLink = 'https://linkupcalendar.app/#/cal/${data['sharedLinkEdit']}';
+    String viewLink = 'https://linkupcalendar.app/#/cal/${data['sharedLinkView']}';
+
 
     final TextEditingController linkController = TextEditingController(
       text: allowEdit ? editLink : viewLink,

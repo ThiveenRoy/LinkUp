@@ -132,10 +132,11 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       await _handlePostLoginRedirect();
 
     } on FirebaseAuthException catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Auth Error: ${e.message}")),
-      );
-    } catch (e) {
+  print('❌ FirebaseAuthException: ${e.code} - ${e.message}');
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text("Auth Error: ${e.message}")),
+  );
+}catch (e) {
       print("Unexpected error: $e");
       setState(() => error = isLogin
           ? "Login failed. Please check your credentials."
@@ -146,30 +147,34 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   }
 
   Future<void> _continueAsGuest() async {
-    final prefs = await SharedPreferences.getInstance();
-    final currentUser = FirebaseAuth.instance.currentUser;
+  final prefs = await SharedPreferences.getInstance();
+  final currentUser = FirebaseAuth.instance.currentUser;
 
-    // 🔒 Don't allow guest if user is still signed in
-    if (currentUser != null) {
-      print("⚠️ Cannot continue as guest. Firebase user still signed in: ${currentUser.uid}");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("You're already signed in. Please logout first.")),
-      );
-      return;
-    }
-
-    // ✅ Only create new guest ID if not exists
-    String? guestId = prefs.getString('guestId');
-    if (guestId == null) {
-      guestId = const Uuid().v4();
-      await prefs.setString('guestId', guestId);
-      print("🆕 Guest session started with ID: $guestId");
-    } else {
-      print("♻️ Reusing existing guest ID: $guestId");
-    }
-
-    await _handlePostLoginRedirect();
+  // 🔒 Don't allow guest if user is still signed in
+  if (currentUser != null) {
+    print("⚠️ Cannot continue as guest. Firebase user still signed in: ${currentUser.uid}");
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("You're already signed in. Please logout first.")),
+    );
+    return;
   }
+
+  // ✅ Only create new guest ID if not exists
+  String? guestId = prefs.getString('guestId');
+  if (guestId == null) {
+    guestId = const Uuid().v4();
+    await prefs.setString('guestId', guestId);
+    print("🆕 Guest session started with ID: $guestId");
+  } else {
+    print("♻️ Reusing existing guest ID: $guestId");
+  }
+
+  // 🟢 Set flag to indicate guest has explicitly chosen to continue
+  await prefs.setBool('hasContinuedAsGuest', true);
+
+  await _handlePostLoginRedirect();
+}
+
 
   Future<void> _signInWithGoogle() async {
     try {

@@ -17,13 +17,14 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  String initialRoute = '/'; // Default route
-
   final prefs = await SharedPreferences.getInstance();
   final firebaseUser = FirebaseAuth.instance.currentUser;
   final guestId = prefs.getString('guestId');
+  final hasContinuedAsGuest = prefs.getBool('hasContinuedAsGuest') ?? false;
 
-  if (firebaseUser != null || guestId != null) {
+  String initialRoute = '/'; // default: AuthLandingScreen
+
+  if (firebaseUser != null || (guestId != null && hasContinuedAsGuest)) {
     initialRoute = '/calendarHome';
   }
 
