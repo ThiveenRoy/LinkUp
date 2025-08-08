@@ -21,7 +21,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool isLoading = false;
-  bool isLogin = true;
+  bool isLogin = false;
   String? error;
 
   // 🔁 Check for shared calendar and navigate accordingly
@@ -67,29 +67,42 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   }
 
   void _checkCurrentIdentity() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final prefs = await SharedPreferences.getInstance();
-    final guestId = prefs.getString('guestId');
-    final hasContinuedAsGuest = prefs.getBool('hasContinuedAsGuest') ?? false;
-    final seenTutorial = prefs.getBool('seenTutorial') ?? false;
+  final user = FirebaseAuth.instance.currentUser;
+  final prefs = await SharedPreferences.getInstance();
+  final guestId = prefs.getString('guestId');
+  final hasContinuedAsGuest = prefs.getBool('hasContinuedAsGuest') ?? false;
+  final seenTutorial = prefs.getBool('seenTutorial') ?? false;
 
-    if (user != null || (guestId != null && hasContinuedAsGuest)) {
-      print("✅ Authenticated user or guest detected.");
+  // ✅ If user or guest is already authenticated
+  if (user != null || (guestId != null && hasContinuedAsGuest)) {
+    print("✅ Authenticated user or guest detected.");
 
-      // Delay a frame to allow widget tree to build before navigating
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (seenTutorial) {
-          _handlePostLoginRedirect();
-        } else {
-          Navigator.pushReplacementNamed(context, '/onboarding');
-        }
-      });
-    } else {
-      print("🆕 No user found, will generate guest on continue");
-    }
+    // ✅ Show login layout (welcome back)
+    setState(() {
+      isLogin = true;
+    });
+
+    // ⏳ Wait for layout to build before routing
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (seenTutorial) {
+        _handlePostLoginRedirect();
+      } else {
+        Navigator.pushReplacementNamed(context, '/onboarding');
+      }
+    });
+  } else {
+    print("🆕 No user found, showing sign-up layout");
+    // ✅ Show signup layout (let’s get started)
+    setState(() {
+      isLogin = false;
+    });
   }
+}
+
 
   Future<void> _loginOrSignUp() async {
+    bool justSignedUp = false;
+
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -112,6 +125,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
             email: email,
             password: password,
           );
+          justSignedUp = true; // ✅ Mark as newly signed up
         } on FirebaseAuthException catch (e) {
           if (e.code == 'email-already-in-use') {
             final methods = await FirebaseAuth.instance
@@ -128,8 +142,8 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
               return;
             } else {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text("Email is already in use. Try Google Sign"),
+                const SnackBar(
+                  content: Text("Email is already in use. Try Google Sign-In."),
                 ),
               );
               setState(() => isLoading = false);
@@ -149,6 +163,13 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       final guestId = prefs.getString('guestId');
       print("👤 Retained guest ID after login: $guestId");
 
+      // ✅ If just signed up, go straight to onboarding
+      if (justSignedUp) {
+        Navigator.pushReplacementNamed(context, '/onboarding');
+        setState(() => isLoading = false);
+        return;
+      }
+
       // 🔁 Redirect based on shared calendar presence
       final seenTutorial = prefs.getBool('seenTutorial') ?? false;
 
@@ -164,13 +185,12 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       ).showSnackBar(SnackBar(content: Text("Auth Error: ${e.message}")));
     } catch (e) {
       print("Unexpected error: $e");
-      setState(
-        () =>
-            error =
-                isLogin
-                    ? "Login failed. Please check your credentials."
-                    : "Sign up failed. Please try again.",
-      );
+      setState(() {
+        error =
+            isLogin
+                ? "Login failed. Please check your credentials."
+                : "Sign up failed. Please try again.";
+      });
     }
 
     setState(() => isLoading = false);
@@ -306,19 +326,18 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            isLogin
-                ? 'Welcome Back to LinkUp Calendar'
-                : 'Create Your LinkUp Account',
+            isLogin ? 'Welcome Back' : 'Let’s Get Started',
             style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
           Text(
             isLogin
-                ? 'Login to continue using Link Up'
-                : 'Sign up to start collaborating',
+                ? 'Login to continue using Link Up Calendar.'
+                : 'Create your account to start collaborating.',
             textAlign: TextAlign.center,
           ),
+
           const SizedBox(height: 24),
           if (error != null)
             Card(
