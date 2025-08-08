@@ -1,12 +1,13 @@
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart'; // <-- added for web drag support
 import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_calendar/screens/join_calendar_screen.dart';
+import 'package:shared_calendar/screens/onboarding_screen.dart';
 import 'package:shared_calendar/screens/shared_calendar_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'firebase_options.dart';
 
+import 'firebase_options.dart';
 import 'screens/auth_screen.dart';
 import 'screens/calendar_home_screen.dart';
 import 'screens/master_calendar_screen.dart';
@@ -21,14 +22,25 @@ void main() async {
   final firebaseUser = FirebaseAuth.instance.currentUser;
   final guestId = prefs.getString('guestId');
   final hasContinuedAsGuest = prefs.getBool('hasContinuedAsGuest') ?? false;
+  final seenTutorial = prefs.getBool('seenTutorial') ?? false;
 
-  String initialRoute = '/'; // default: AuthLandingScreen
+  String initialRoute = '/';
 
   if (firebaseUser != null || (guestId != null && hasContinuedAsGuest)) {
-    initialRoute = '/calendarHome';
+    initialRoute = seenTutorial ? '/calendarHome' : '/onboarding';
   }
 
   runApp(MyApp(initialRoute: initialRoute));
+}
+
+// ✅ Added: Scroll behavior that supports mouse swipe on web
+class WebScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+      };
 }
 
 class MyApp extends StatelessWidget {
@@ -40,6 +52,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'LinkUp Calendar',
+      scrollBehavior: WebScrollBehavior(), // ✅ Apply custom scroll behavior
 
       theme: ThemeData(
         brightness: Brightness.light,
@@ -87,6 +100,7 @@ class MyApp extends StatelessWidget {
 
       routes: {
         '/': (context) => AuthLandingScreen(),
+        '/onboarding': (context) => const OnboardingScreen(),
         '/masterCalendar': (context) => MasterCalendarScreen(),
         '/sharedCalendar': (context) {
           final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;

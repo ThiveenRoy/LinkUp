@@ -10,6 +10,7 @@ class CalendarHomeScreen extends StatefulWidget {
   final String calendarName;
   final int tabIndex;
   final bool fromInvite;
+  
 
   const CalendarHomeScreen({
     super.key,
@@ -17,6 +18,7 @@ class CalendarHomeScreen extends StatefulWidget {
     required this.calendarName,
     this.tabIndex = 0,
     this.fromInvite = false,
+    
   });
 
   @override
@@ -27,6 +29,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final GlobalKey<_SharedCalendarTabState> _sharedTabKey = GlobalKey();
+  bool _showTutorialCard = false;
 
   @override
   void initState() {
@@ -86,20 +89,25 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
             children: [
               Image.asset(
                 'assets/logo_final.png',
-                height: 32,
+                height: 30,
               ),
-              const SizedBox(width: 10),
-              Text(
-                'LinkUp Calendar',
-                style: TextStyle(
-                  fontFamily: 'Poppins',
-                  fontWeight: FontWeight.bold,
-                  fontSize: 20,
-                  color: Theme.of(context).textTheme.titleLarge!.color,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'LinkUp Calendar',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16, // slightly smaller to fit on mobile
+                    color: Theme.of(context).textTheme.titleLarge!.color,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
-              )
+              ),
             ],
           ),
+
           actions: [
             TextButton.icon(
               icon: const Icon(Icons.logout, color: Colors.redAccent),
@@ -158,18 +166,56 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
           ),
         ),
 
-        body: TabBarView(
-          controller: _tabController,
-          children: [
-            const MasterCalendarScreen(),
-            SharedCalendarTab(
-              key: _sharedTabKey,
-              calendarId: widget.calendarId,
-              calendarName: widget.calendarName,
-              fromInvite: widget.fromInvite,
-            ),
-          ],
+       body: Column(
+  children: [
+    // 👋 Show tutorial card if first time
+    if (_showTutorialCard)
+      Card(
+        margin: const EdgeInsets.all(16),
+        color: Colors.amber[100],
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              const Icon(Icons.lightbulb_outline, color: Colors.orange),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Welcome! Use the "+" button to add events.\nSwitch tabs to manage calendars.',
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () async {
+                  setState(() {
+                    _showTutorialCard = false;
+                  });
+                },
+              )
+            ],
+          ),
         ),
+      ),
+
+    // 📅 Tab view as usual
+    Expanded(
+      child: TabBarView(
+        controller: _tabController,
+        children: [
+          const MasterCalendarScreen(),
+          SharedCalendarTab(
+            key: _sharedTabKey,
+            calendarId: widget.calendarId,
+            calendarName: widget.calendarName,
+            fromInvite: widget.fromInvite,
+          ),
+        ],
+      ),
+    )
+  ],
+),
+
       ),
     );
   }

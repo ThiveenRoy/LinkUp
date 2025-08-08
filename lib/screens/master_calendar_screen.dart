@@ -53,6 +53,20 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     }
   }
 
+  String _formatEventTime(
+    DateTime? selectedDate,
+    DateTime? start,
+    DateTime? end,
+  ) {
+    if (start == null || end == null || selectedDate == null) return '';
+
+    final selectedDateFormatted = DateFormat('d MMM yyyy').format(selectedDate);
+    final startTime = DateFormat('h:mm a').format(start);
+    final endTime = DateFormat('h:mm a').format(end);
+
+    return '$selectedDateFormatted, $startTime – $endTime';
+  }
+
   Future<void> _saveEvent({
     required String title,
     required String description,
@@ -154,8 +168,11 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
           59,
         );
 
+        final rawTitle = data['title'] ?? '';
         final title =
-            isShared ? '${data['title']} ($calendarName)' : data['title'];
+            isShared && !rawTitle.contains(calendarName)
+                ? '$rawTitle ($calendarName)'
+                : rawTitle;
 
         final color = Color.fromARGB(
           255,
@@ -203,8 +220,12 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       return;
     }
 
-    DateTime selectedStart = event?['startTime']?.toDate() ?? _selectedDay;
-    DateTime selectedEnd = event?['endTime']?.toDate() ?? _selectedDay;
+    DateTime selectedStart =
+        event?['startTime']?.toDate() ??
+        DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day, 0, 0);
+    DateTime selectedEnd =
+        event?['endTime']?.toDate() ??
+        DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day, 0, 0);
 
     final titleController = TextEditingController(text: event?['title'] ?? '');
     final descriptionController = TextEditingController(
@@ -265,8 +286,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                         ),
                       ),
                       const SizedBox(height: 16),
+                      // === Start Date & Time ===
                       Text(
-                        "Start Date:",
+                        "Start:",
                         style: TextStyle(
                           color: textDark,
                           fontWeight: FontWeight.w600,
@@ -275,7 +297,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         title: Text(
-                          DateFormat('d-M-yyyy').format(selectedStart),
+                          DateFormat('dd-MM-yyyy').format(selectedStart),
                         ),
                         trailing: Icon(
                           Icons.calendar_today,
@@ -288,13 +310,47 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                             firstDate: DateTime(2020),
                             lastDate: DateTime(2100),
                           );
-                          if (picked != null)
-                            setModalState(() => selectedStart = picked);
+                          if (picked != null) {
+                            setModalState(() {
+                              selectedStart = DateTime(
+                                picked.year,
+                                picked.month,
+                                picked.day,
+                                selectedStart.hour,
+                                selectedStart.minute,
+                              );
+                            });
+                          }
                         },
                       ),
-                      const SizedBox(height: 8),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          DateFormat('hh:mm a').format(selectedStart),
+                        ),
+                        trailing: Icon(Icons.access_time, color: buttonColor),
+                        onTap: () async {
+                          final time = await showTimePicker(
+                            context: context,
+                            initialTime: const TimeOfDay(hour: 0, minute: 0),
+                          );
+                          if (time != null) {
+                            setModalState(() {
+                              selectedStart = DateTime(
+                                selectedStart.year,
+                                selectedStart.month,
+                                selectedStart.day,
+                                time.hour,
+                                time.minute,
+                              );
+                            });
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      // === End Date & Time ===
                       Text(
-                        "End Date:",
+                        "End:",
                         style: TextStyle(
                           color: textDark,
                           fontWeight: FontWeight.w600,
@@ -302,7 +358,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                       ),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: Text(DateFormat('d-M-yyyy').format(selectedEnd)),
+                        title: Text(
+                          DateFormat('dd-MM-yyyy').format(selectedEnd),
+                        ),
                         trailing: Icon(
                           Icons.calendar_today,
                           color: buttonColor,
@@ -314,8 +372,39 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                             firstDate: DateTime(2020),
                             lastDate: DateTime(2100),
                           );
-                          if (picked != null)
-                            setModalState(() => selectedEnd = picked);
+                          if (picked != null) {
+                            setModalState(() {
+                              selectedEnd = DateTime(
+                                picked.year,
+                                picked.month,
+                                picked.day,
+                                selectedEnd.hour,
+                                selectedEnd.minute,
+                              );
+                            });
+                          }
+                        },
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(DateFormat('hh:mm a').format(selectedEnd)),
+                        trailing: Icon(Icons.access_time, color: buttonColor),
+                        onTap: () async {
+                          final time = await showTimePicker(
+                            context: context,
+                            initialTime: const TimeOfDay(hour: 0, minute: 0),
+                          );
+                          if (time != null) {
+                            setModalState(() {
+                              selectedEnd = DateTime(
+                                selectedEnd.year,
+                                selectedEnd.month,
+                                selectedEnd.day,
+                                time.hour,
+                                time.minute,
+                              );
+                            });
+                          }
                         },
                       ),
                     ],
@@ -349,7 +438,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text(
-                                'End date must be after start date.',
+                                'End time must be after start time.',
                               ),
                             ),
                           );
@@ -368,7 +457,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                         backgroundColor: buttonColor,
                         foregroundColor: Colors.white,
                       ),
-                      child: const Text('Add'),
+                      child: Text(event == null ? 'Add' : 'Update'),
                     ),
                   ],
                 ),
@@ -382,234 +471,326 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: bgColor,
-      child:
-          _loading
-              ? const Center(child: CircularProgressIndicator())
-              : Column(
+    final isMobile = MediaQuery.of(context).size.width < 500;
+
+    final calendarWidget = TableCalendar(
+      firstDay: DateTime.utc(2000),
+      lastDay: DateTime.utc(2100),
+      focusedDay: _focusedDay,
+      selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+      onDaySelected: (selectedDay, focusedDay) {
+        setState(() {
+          _selectedDay = selectedDay;
+          _focusedDay = focusedDay;
+        });
+      },
+      onPageChanged: (focusedDay) {
+        setState(() {
+          _focusedDay = focusedDay;
+        });
+      },
+      onHeaderTapped: (date) async {
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: _focusedDay,
+          firstDate: DateTime(2000),
+          lastDate: DateTime(2100),
+          initialEntryMode: DatePickerEntryMode.calendarOnly,
+          initialDatePickerMode: DatePickerMode.year,
+        );
+        if (picked != null) {
+          setState(() {
+            _focusedDay = picked;
+            _selectedDay = picked;
+          });
+        }
+      },
+      calendarFormat: CalendarFormat.month,
+      eventLoader: _getEventsForDay,
+      headerStyle: HeaderStyle(
+        formatButtonVisible: false,
+        titleCentered: true,
+        titleTextStyle: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: textDark,
+        ),
+        headerPadding: const EdgeInsets.symmetric(vertical: 8),
+      ),
+      calendarBuilders: CalendarBuilders(
+        headerTitleBuilder: (context, day) {
+          return InkWell(
+            onTap: () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _focusedDay,
+                firstDate: DateTime(2000),
+                lastDate: DateTime(2100),
+                initialEntryMode: DatePickerEntryMode.calendarOnly,
+                initialDatePickerMode: DatePickerMode.year,
+              );
+              if (picked != null) {
+                setState(() {
+                  _focusedDay = picked;
+                  _selectedDay = picked;
+                });
+              }
+            },
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  TableCalendar(
-                    firstDay: DateTime.utc(2000),
-                    lastDay: DateTime.utc(2100),
-                    focusedDay: _focusedDay,
-                    selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-                    onDaySelected: (selectedDay, focusedDay) {
-                      setState(() {
-                        _selectedDay = selectedDay;
-                        _focusedDay = focusedDay;
-                      });
-                    },
-                    onPageChanged: (focusedDay) {
-                      setState(() {
-                        _focusedDay = focusedDay;
-                      });
-                    },
-                    onHeaderTapped: (date) async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: _focusedDay,
-                        firstDate: DateTime(2000),
-                        lastDate: DateTime(2100),
-                        initialEntryMode: DatePickerEntryMode.calendarOnly,
-                        initialDatePickerMode: DatePickerMode.year,
-                      );
-                      if (picked != null) {
-                        setState(() {
-                          _focusedDay = picked;
-                          _selectedDay = picked;
-                        });
-                      }
-                    },
-                    calendarFormat: CalendarFormat.month,
-                    eventLoader: _getEventsForDay,
-                    headerStyle: HeaderStyle(
-                      formatButtonVisible: false,
-                      titleCentered: true,
-                      titleTextStyle: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: textDark,
-                      ),
-                      headerPadding: const EdgeInsets.symmetric(vertical: 8),
-                    ),
-                    calendarBuilders: CalendarBuilders(
-                      headerTitleBuilder: (context, day) {
-                        return InkWell(
-                          onTap: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: _focusedDay,
-                              firstDate: DateTime(2000),
-                              lastDate: DateTime(2100),
-                              initialEntryMode:
-                                  DatePickerEntryMode.calendarOnly,
-                              initialDatePickerMode: DatePickerMode.year,
-                            );
-                            if (picked != null) {
-                              setState(() {
-                                _focusedDay = picked;
-                                _selectedDay = picked;
-                              });
-                            }
-                          },
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.click,
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.calendar_today,
-                                  size: 20,
-                                  color: textDark,
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  DateFormat(
-                                    'MMMM yyyy',
-                                  ).format(_focusedDay), // e.g., August 2025
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                    color: textDark,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                      markerBuilder: (context, date, events) {
-                        if (events.isEmpty) return const SizedBox();
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children:
-                              events.map((e) {
-                                final event = e as Map<String, dynamic>;
-                                final color =
-                                    _eventColors[event['id']] ?? Colors.purple;
-                                return Container(
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 0.5,
-                                    vertical: 1.5,
-                                  ),
-                                  width: 6,
-                                  height: 6,
-                                  decoration: BoxDecoration(
-                                    color: color,
-                                    shape: BoxShape.circle,
-                                  ),
-                                );
-                              }).toList(),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 16),
+                  Icon(Icons.calendar_today, size: 20, color: textDark),
+                  const SizedBox(width: 6),
                   Text(
-                    'Your schedule for ${_selectedDay.day}-${_selectedDay.month}-${_selectedDay.year}',
+                    DateFormat('MMMM yyyy').format(_focusedDay),
                     style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: buttonColor,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.bottomRight,
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 16.0),
-                      child: ElevatedButton.icon(
-                        onPressed: () => _showEventDialog(),
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add Event'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: lightCard,
-                          foregroundColor: textDark,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.only(top: 8),
-                      itemCount: _getEventsForDay(_selectedDay).length,
-                      itemBuilder: (context, index) {
-                        final event = _getEventsForDay(_selectedDay)[index];
-                        return Container(
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: lightCard,
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: const [
-                              BoxShadow(blurRadius: 4, color: Colors.black12),
-                            ],
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                event['title'] ?? '',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: textDark,
-                                ),
-                              ),
-                              if (event['calendarName'] != null)
-                                Text(
-                                  event['calendarName'],
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
-                                    color: textDark.withOpacity(0.7),
-                                  ),
-                                ),
-                              const SizedBox(height: 4),
-                              Text(
-                                event['description'] ?? '',
-                                style: TextStyle(
-                                  color: textDark.withOpacity(0.8),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  TextButton(
-                                    onPressed:
-                                        () => _showEventDialog(event: event),
-                                    child: const Text('Edit'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () async {
-                                      await FirebaseFirestore.instance
-                                          .collection('calendars')
-                                          .doc(event['calendarId'])
-                                          .collection('events')
-                                          .doc(event['id'])
-                                          .delete();
-                                      _loadEvents();
-                                    },
-                                    child: const Text('Delete'),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: textDark,
                     ),
                   ),
                 ],
+              ),
+            ),
+          );
+        },
+        markerBuilder: (context, date, events) {
+          if (events.isEmpty) return const SizedBox();
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children:
+                events.map((e) {
+                  final event = e as Map<String, dynamic>;
+                  final color = _eventColors[event['id']] ?? Colors.purple;
+                  return Container(
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 0.5,
+                      vertical: 1.5,
+                    ),
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
+                  );
+                }).toList(),
+          );
+        },
+      ),
+    );
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      body:
+          _loading
+              ? const Center(child: CircularProgressIndicator())
+              : SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      isMobile
+                          ? SizedBox(height: 440, child: calendarWidget)
+                          : calendarWidget,
+                      const SizedBox(height: 16),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Your schedule for ${_selectedDay.day}-${_selectedDay.month}-${_selectedDay.year}',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: 'Roboto',
+                                  color: buttonColor,
+                                ),
+                              ),
+                            ),
+                            ElevatedButton.icon(
+                              onPressed: () => _showEventDialog(),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: const Text('Add Event'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: lightCard,
+                                foregroundColor: textDark,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(30),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                textStyle: const TextStyle(fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: const EdgeInsets.only(top: 8),
+                        itemCount: _getEventsForDay(_selectedDay).length,
+                        itemBuilder: (context, index) {
+                          final event = _getEventsForDay(_selectedDay)[index];
+                          return Container(
+                            margin: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: lightCard,
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: const [
+                                BoxShadow(blurRadius: 4, color: Colors.black12),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Bullet + Title
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        '•',
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          height: 1.2,
+                                          color: textDark,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '${event['title']}',
+                                            style: TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                              color: textDark,
+                                              height: 1.2,
+                                            ),
+                                          ),
+                                          if (event['calendarName'] != null &&
+                                              event['calendarName']
+                                                  .toString()
+                                                  .isNotEmpty &&
+                                              !(event['title'] ?? '')
+                                                  .toString()
+                                                  .contains(
+                                                    event['calendarName'],
+                                                  ))
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                top: 2,
+                                              ),
+                                              child: Text(
+                                                event['calendarName'],
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontFamily: 'Roboto',
+                                                  color: textDark.withOpacity(
+                                                    0.7,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          if (event['startTime'] != null &&
+                                              event['endTime'] != null)
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                top: 6,
+                                              ),
+                                              child: Text(
+                                                _formatEventTime(
+                                                  _selectedDay,
+                                                  event['startTime']?.toDate(),
+                                                  event['endTime']?.toDate(),
+                                                ),
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w500,
+                                                  color: textDark,
+                                                ),
+                                              ),
+                                            ),
+                                          if (event['description'] != null &&
+                                              event['description']
+                                                  .toString()
+                                                  .isNotEmpty)
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                top: 6,
+                                              ),
+                                              child: Text(
+                                                event['description'],
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w300,
+                                                  fontFamily: 'Roboto',
+                                                  color: textDark.withOpacity(
+                                                    0.85,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+
+                                const SizedBox(height: 8),
+
+                                // Buttons
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    TextButton(
+                                      onPressed:
+                                          () => _showEventDialog(event: event),
+                                      child: const Text('Edit'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () async {
+                                        await FirebaseFirestore.instance
+                                            .collection('calendars')
+                                            .doc(event['calendarId'])
+                                            .collection('events')
+                                            .doc(event['id'])
+                                            .delete();
+                                        _loadEvents();
+                                      },
+                                      child: const Text('Delete'),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
               ),
     );
   }
