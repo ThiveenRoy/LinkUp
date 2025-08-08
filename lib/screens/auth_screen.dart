@@ -70,11 +70,20 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
     final user = FirebaseAuth.instance.currentUser;
     final prefs = await SharedPreferences.getInstance();
     final guestId = prefs.getString('guestId');
+    final hasContinuedAsGuest = prefs.getBool('hasContinuedAsGuest') ?? false;
+    final seenTutorial = prefs.getBool('seenTutorial') ?? false;
 
-    if (user != null) {
-      print("👤 Logged in user: ${user.uid}");
-    } else if (guestId != null) {
-      print("👤 Guest ID in SharedPrefs: $guestId");
+    if (user != null || (guestId != null && hasContinuedAsGuest)) {
+      print("✅ Authenticated user or guest detected.");
+
+      // Delay a frame to allow widget tree to build before navigating
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (seenTutorial) {
+          _handlePostLoginRedirect();
+        } else {
+          Navigator.pushReplacementNamed(context, '/onboarding');
+        }
+      });
     } else {
       print("🆕 No user found, will generate guest on continue");
     }
