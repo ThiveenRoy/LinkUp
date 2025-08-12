@@ -1,11 +1,11 @@
 {
-    "name": "shared_calendar",
-    "short_name": "shared_calendar",
+    "name": "Link Up Calendar",
+    "short_name": "LinkUp",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#F9F7F7",
+    "theme_color": "#3F72AF",
+    "description": "Plan together. Stress less. Link Up Calendar lets you share events, coordinate schedules, and collaborate with friends, family, or teams — for free, on any device.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
