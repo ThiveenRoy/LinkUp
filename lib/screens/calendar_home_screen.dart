@@ -3,14 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'master_calendar_screen.dart';
 import 'shared_calendar_screen.dart';
-import 'shared_calendar_list.dart'; // Don't forget this!
+import 'shared_calendar_list.dart';
 
 class CalendarHomeScreen extends StatefulWidget {
   final String? calendarId;
   final String calendarName;
   final int tabIndex;
   final bool fromInvite;
-  
 
   const CalendarHomeScreen({
     super.key,
@@ -18,7 +17,6 @@ class CalendarHomeScreen extends StatefulWidget {
     required this.calendarName,
     this.tabIndex = 0,
     this.fromInvite = false,
-    
   });
 
   @override
@@ -43,13 +41,11 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) return; // Prevent reset during swipe
       if (_tabController.index == 1 && !widget.fromInvite) {
-        // Only reset if the SharedCalendarTab is built
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_sharedTabKey.currentState != null) {
-            _sharedTabKey.currentState!.resetToListView();
-          }
+          _sharedTabKey.currentState?.resetToListView();
         });
       }
+      setState(() {}); // keep bottom nav in sync on mobile
     });
   }
 
@@ -70,8 +66,123 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
     super.dispose();
   }
 
+  Future<void> _logout(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    final guestId = prefs.getString('guestId'); // backup guestId
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseAuth.instance.signOut();
+      try {
+        await FirebaseAuth.instance.setPersistence(Persistence.NONE);
+      } catch (_) {}
+    }
+
+    await prefs.remove('hasContinuedAsGuest');
+    if (guestId != null) {
+      await prefs.setString('guestId', guestId);
+    }
+
+    if (context.mounted) {
+      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
+    final desktopAppBar = AppBar(
+      automaticallyImplyLeading: false,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      elevation: 1,
+      title: Row(
+        children: [
+          Image.asset('assets/logo_final.png', height: 30),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'LinkUp Calendar',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Theme.of(context).textTheme.titleLarge!.color,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton.icon(
+          icon: const Icon(Icons.logout, color: Colors.redAccent),
+          label: const Text(
+            'Logout',
+            style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+          ),
+          onPressed: () => _logout(context),
+        ),
+      ],
+      bottom: TabBar(
+        controller: _tabController,
+        indicatorColor: Theme.of(context).colorScheme.primary,
+        labelColor: Theme.of(context).colorScheme.primary,
+        unselectedLabelColor: Theme.of(context).hintColor,
+        labelStyle: const TextStyle(fontWeight: FontWeight.w600),
+        tabs: const [
+          Tab(icon: Icon(Icons.calendar_today), text: 'Master Calendar'),
+          Tab(icon: Icon(Icons.group), text: 'Shared Calendar'),
+        ],
+      ),
+    );
+
+    // Compact top header for mobile (logo + menu only)
+    final mobileTopBar = SafeArea(
+      bottom: false,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        color: Theme.of(context).colorScheme.surface,
+        child: Row(
+          children: [
+            Image.asset('assets/logo_final.png', height: 24),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'LinkUp Calendar',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+            ),
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              onSelected: (v) {
+                if (v == 'logout') _logout(context);
+              },
+              itemBuilder: (ctx) => const [
+                PopupMenuItem(value: 'logout', child: Text('Logout')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+
+    // Bottom tabs for mobile
+    final mobileBottomNav = NavigationBar(
+      selectedIndex: _tabController.index,
+      destinations: const [
+        NavigationDestination(icon: Icon(Icons.calendar_today), label: 'Master Calendar'),
+        NavigationDestination(icon: Icon(Icons.group), label: 'Shared Calendar'),
+      ],
+      onDestinationSelected: (i) {
+        _tabController.index = i;
+        setState(() {});
+      },
+    );
+
     return WillPopScope(
       onWillPop: () async {
         if (widget.fromInvite) {
@@ -81,141 +192,55 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
         return true;
       },
       child: Scaffold(
-        appBar: AppBar(
-          automaticallyImplyLeading: false,
-          backgroundColor: Theme.of(context).colorScheme.surface,
-          elevation: 1,
-          title: Row(
-            children: [
-              Image.asset(
-                'assets/logo_final.png',
-                height: 30,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'LinkUp Calendar',
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16, // slightly smaller to fit on mobile
-                    color: Theme.of(context).textTheme.titleLarge!.color,
+        appBar: isMobile ? null : desktopAppBar,
+        bottomNavigationBar: isMobile ? mobileBottomNav : null,
+        body: Column(
+          children: [
+            if (isMobile) mobileTopBar,
+
+            // Tutorial card
+            if (_showTutorialCard)
+              Card(
+                margin: const EdgeInsets.all(16),
+                color: Colors.amber[100],
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.lightbulb_outline, color: Colors.orange),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Welcome! Use the "+" button to add events.\nSwitch tabs to manage calendars.',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(() => _showTutorialCard = false),
+                      ),
+                    ],
                   ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
                 ),
               ),
-            ],
-          ),
 
-          actions: [
-            TextButton.icon(
-              icon: const Icon(Icons.logout, color: Colors.redAccent),
-              label: const Text(
-                'Logout',
-                style: TextStyle(
-                  color: Colors.redAccent,
-                  fontWeight: FontWeight.bold,
-                ),
+            // Content
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  const MasterCalendarScreen(),
+                  SharedCalendarTab(
+                    key: _sharedTabKey,
+                    calendarId: widget.calendarId,
+                    calendarName: widget.calendarName,
+                    fromInvite: widget.fromInvite,
+                  ),
+                ],
               ),
-              onPressed: () async {
-                final prefs = await SharedPreferences.getInstance();
-                final guestId = prefs.getString('guestId'); // backup guestId
-
-                final user = FirebaseAuth.instance.currentUser;
-                if (user != null) {
-                  await FirebaseAuth.instance.signOut();
-                  print("🔒 Firebase user signed out.");
-
-                  // Force clear persistent session on web
-                  try {
-                    await FirebaseAuth.instance.setPersistence(Persistence.NONE);
-                    print("🧹 Persistence set to NONE");
-                  } catch (e) {
-                    print("⚠️ Could not set persistence: $e");
-                  }
-                }
-
-                // ❌ Remove hasContinuedAsGuest so app doesn't redirect on refresh
-                await prefs.remove('hasContinuedAsGuest');
-
-                // ✅ Re-store guestId so it persists silently (optional)
-                if (guestId != null) {
-                  await prefs.setString('guestId', guestId);
-                  print("👤 Guest ID restored after clearing prefs");
-                }
-
-                if (context.mounted) {
-                  Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
-                }
-              }
-
             ),
           ],
-
-          bottom: TabBar(
-            controller: _tabController,
-            indicatorColor: Theme.of(context).colorScheme.primary,
-            labelColor: Theme.of(context).colorScheme.primary,
-            unselectedLabelColor: Theme.of(context).hintColor,
-            labelStyle: const TextStyle(fontWeight: FontWeight.w600),
-            tabs: const [
-              Tab(icon: Icon(Icons.calendar_today), text: 'Master Calendar'),
-              Tab(icon: Icon(Icons.group), text: 'Shared Calendar'),
-            ],
-          ),
         ),
-
-       body: Column(
-  children: [
-    // 👋 Show tutorial card if first time
-    if (_showTutorialCard)
-      Card(
-        margin: const EdgeInsets.all(16),
-        color: Colors.amber[100],
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              const Icon(Icons.lightbulb_outline, color: Colors.orange),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Welcome! Use the "+" button to add events.\nSwitch tabs to manage calendars.',
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () async {
-                  setState(() {
-                    _showTutorialCard = false;
-                  });
-                },
-              )
-            ],
-          ),
-        ),
-      ),
-
-    // 📅 Tab view as usual
-    Expanded(
-      child: TabBarView(
-        controller: _tabController,
-        children: [
-          const MasterCalendarScreen(),
-          SharedCalendarTab(
-            key: _sharedTabKey,
-            calendarId: widget.calendarId,
-            calendarName: widget.calendarName,
-            fromInvite: widget.fromInvite,
-          ),
-        ],
-      ),
-    )
-  ],
-),
-
       ),
     );
   }
