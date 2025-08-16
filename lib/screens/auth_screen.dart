@@ -5,6 +5,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:shared_calendar/screens/join_calendar_screen.dart';
+
 class AuthLandingScreen extends StatefulWidget {
   @override
   _AuthLandingScreenState createState() => _AuthLandingScreenState();
@@ -24,37 +26,49 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   bool isLogin = false;
   String? error;
 
-  // 🔁 Check for shared calendar and navigate accordingly
+  /// 🔍 Check Firestore for seenTutorial flag
+  Future<bool> _getServerSeenTutorialIfAny() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) return false;
+    try {
+      final snap =
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get();
+      return (snap.data()?['seenTutorial'] == true);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 🔁 Post-auth redirect (Invite takes precedence)
   Future<void> _handlePostLoginRedirect() async {
     final prefs = await SharedPreferences.getInstance();
+    final pendingInviteId = prefs.getString('pendingInviteId');
     final pendingSharedCalendarId = prefs.getString('pendingSharedCalendarId');
 
-    if (pendingSharedCalendarId != null) {
+    final inviteId =
+        (pendingInviteId?.isNotEmpty ?? false)
+            ? pendingInviteId
+            : (pendingSharedCalendarId?.isNotEmpty ?? false)
+            ? pendingSharedCalendarId
+            : null;
+
+    if (inviteId != null) {
+      await prefs.remove('pendingInviteId');
       await prefs.remove('pendingSharedCalendarId');
 
-      // 🔍 Fetch calendar name
-      final doc =
-          await FirebaseFirestore.instance
-              .collection('calendars')
-              .doc(pendingSharedCalendarId)
-              .get();
-      final calendarName = doc.data()?['name'] ?? 'Shared Calendar';
-
-      // ✅ Redirect to CalendarHomeScreen (tabIndex 1)
-      Navigator.pushNamed(
-        context,
-        '/calendarHome',
-        arguments: {
-          'calendarId': pendingSharedCalendarId,
-          'calendarName': calendarName,
-          'tabIndex': 1,
-          'fromInvite': true,
-        },
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => JoinCalendarScreen(sharedLinkId: inviteId),
+        ),
       );
       return;
     }
 
-    // Default to CalendarHome tab 0
+    if (!mounted) return;
     Navigator.pushNamed(
       context,
       '/calendarHome',
@@ -66,43 +80,61 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
     );
   }
 
-  void _checkCurrentIdentity() async {
-  final user = FirebaseAuth.instance.currentUser;
-  final prefs = await SharedPreferences.getInstance();
-  final guestId = prefs.getString('guestId');
-  final hasContinuedAsGuest = prefs.getBool('hasContinuedAsGuest') ?? false;
-  final seenTutorial = prefs.getBool('seenTutorial') ?? false;
-
-  // ✅ If user or guest is already authenticated
-  if (user != null || (guestId != null && hasContinuedAsGuest)) {
-    print("✅ Authenticated user or guest detected.");
-
-    // ✅ Show login layout (welcome back)
-    setState(() {
-      isLogin = true;
-    });
-
-    // ⏳ Wait for layout to build before routing
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (seenTutorial) {
-        _handlePostLoginRedirect();
-      } else {
-        Navigator.pushReplacementNamed(context, '/onboarding');
-      }
-    });
-  } else {
-    print("🆕 No user found, showing sign-up layout");
-    // ✅ Show signup layout (let’s get started)
-    setState(() {
-      isLogin = false;
-    });
+  /// Convenience: check if an invite is pending right now
+  Future<bool> _hasPendingInvite() async {
+    final prefs = await SharedPreferences.getInstance();
+    final a = prefs.getString('pendingInviteId');
+    final b = prefs.getString('pendingSharedCalendarId');
+    return (a != null && a.isNotEmpty) || (b != null && b.isNotEmpty);
   }
-}
 
+  void _checkCurrentIdentity() async {
+    final user = FirebaseAuth.instance.currentUser;
+    final prefs = await SharedPreferences.getInstance();
+    final guestId = prefs.getString('guestId');
+    final hasContinuedAsGuest = prefs.getBool('hasContinuedAsGuest') ?? false;
+    bool seenTutorialLocal = prefs.getBool('seenTutorial') ?? false;
+
+    // If logged in, consult server flag and sync local cache.
+    bool seenTutorialServer = false;
+    if (user != null && !user.isAnonymous) {
+      seenTutorialServer = await _getServerSeenTutorialIfAny();
+      if (seenTutorialServer && !seenTutorialLocal) {
+        await prefs.setBool('seenTutorial', true);
+        seenTutorialLocal = true;
+      }
+    }
+
+    final isAuthed = (user != null) || (guestId != null && hasContinuedAsGuest);
+    if (isAuthed) {
+      setState(() => isLogin = true);
+
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        // 🚨 Invite should always take precedence over onboarding
+        if (await _hasPendingInvite()) {
+          await _handlePostLoginRedirect();
+          return;
+        }
+
+        final shouldSkip =
+            (user != null && !user.isAnonymous)
+                ? seenTutorialServer
+                : seenTutorialLocal;
+
+        if (shouldSkip) {
+          await _handlePostLoginRedirect();
+        } else {
+          if (!mounted) return;
+          Navigator.pushReplacementNamed(context, '/onboarding');
+        }
+      });
+    } else {
+      setState(() => isLogin = false);
+    }
+  }
 
   Future<void> _loginOrSignUp() async {
     bool justSignedUp = false;
-
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -125,30 +157,20 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
             email: email,
             password: password,
           );
-          justSignedUp = true; // ✅ Mark as newly signed up
+          justSignedUp = true;
         } on FirebaseAuthException catch (e) {
           if (e.code == 'email-already-in-use') {
             final methods = await FirebaseAuth.instance
                 .fetchSignInMethodsForEmail(email);
-            if (methods.contains('google.com')) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    "This email is already registered via Google. Please sign in using Google.",
-                  ),
-                ),
-              );
-              setState(() => isLoading = false);
-              return;
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Email is already in use. Try Google Sign-In."),
-                ),
-              );
-              setState(() => isLoading = false);
-              return;
-            }
+            final msg =
+                methods.contains('google.com')
+                    ? "This email is registered via Google. Use Google Sign-In."
+                    : "Email already in use. Try Google Sign-In.";
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(msg)));
+            setState(() => isLoading = false);
+            return;
           } else {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text("Signup Error: ${e.message}")),
@@ -160,77 +182,68 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       }
 
       final prefs = await SharedPreferences.getInstance();
-      final guestId = prefs.getString('guestId');
-      print("👤 Retained guest ID after login: $guestId");
 
-      // ✅ If just signed up, go straight to onboarding
+      // ✅ Brand-new account → onboarding (no server flag yet)
       if (justSignedUp) {
+        if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/onboarding');
         setState(() => isLoading = false);
         return;
       }
 
-      // 🔁 Redirect based on shared calendar presence
-      final seenTutorial = prefs.getBool('seenTutorial') ?? false;
+      // 🚨 If we came from an invite, ALWAYS skip onboarding and go to Join
+      if (await _hasPendingInvite()) {
+        await _handlePostLoginRedirect();
+        setState(() => isLoading = false);
+        return;
+      }
 
-      if (seenTutorial) {
-        await _handlePostLoginRedirect(); // go to calendar as usual
+      // Otherwise, use server flag to decide onboarding
+      final serverSeen = await _getServerSeenTutorialIfAny();
+      if (serverSeen) {
+        await prefs.setBool('seenTutorial', true); // keep local in sync
+        await _handlePostLoginRedirect();
       } else {
+        if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/onboarding');
       }
     } on FirebaseAuthException catch (e) {
-      print('❌ FirebaseAuthException: ${e.code} - ${e.message}');
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text("Auth Error: ${e.message}")));
-    } catch (e) {
-      print("Unexpected error: $e");
-      setState(() {
-        error =
-            isLogin
-                ? "Login failed. Please check your credentials."
-                : "Sign up failed. Please try again.";
-      });
+    } finally {
+      setState(() => isLoading = false);
     }
-
-    setState(() => isLoading = false);
   }
 
   Future<void> _continueAsGuest() async {
     final prefs = await SharedPreferences.getInstance();
     final currentUser = FirebaseAuth.instance.currentUser;
-
-    // 🔒 Don't allow guest if user is still signed in
     if (currentUser != null) {
-      print(
-        "⚠️ Cannot continue as guest. Firebase user still signed in: ${currentUser.uid}",
-      );
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("You're already signed in. Please logout first."),
-        ),
+        const SnackBar(content: Text("You're already signed in.")),
       );
       return;
     }
 
-    // ✅ Only create new guest ID if not exists
     String? guestId = prefs.getString('guestId');
     if (guestId == null) {
       guestId = const Uuid().v4();
       await prefs.setString('guestId', guestId);
-      print("🆕 Guest session started with ID: $guestId");
-    } else {
-      print("♻️ Reusing existing guest ID: $guestId");
     }
-
-    // 🟢 Set flag to indicate guest has explicitly chosen to continue
     await prefs.setBool('hasContinuedAsGuest', true);
 
-    final seenTutorial = prefs.getBool('seenTutorial') ?? false;
+    // 🚨 Invite still takes precedence
+    if (await _hasPendingInvite()) {
+      await _handlePostLoginRedirect();
+      return;
+    }
 
+    final seenTutorial = prefs.getBool('seenTutorial') ?? false;
     if (seenTutorial) {
-      await _handlePostLoginRedirect(); // go to calendar as usual
+      await _handlePostLoginRedirect();
     } else {
+      if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/onboarding');
     }
   }
@@ -241,39 +254,39 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       final GoogleSignInAccount? account = await googleUser.signIn();
       if (account == null) return;
 
-      final GoogleSignInAuthentication auth = await account.authentication;
-
+      final auth = await account.authentication;
       final credential = GoogleAuthProvider.credential(
         accessToken: auth.accessToken,
         idToken: auth.idToken,
       );
-
       await FirebaseAuth.instance.signInWithCredential(credential);
 
+      // 🚨 If we came from an invite, ALWAYS skip onboarding and go to Join
+      if (await _hasPendingInvite()) {
+        await _handlePostLoginRedirect();
+        return;
+      }
+
+      // Otherwise use server flag
       final prefs = await SharedPreferences.getInstance();
-      final guestId = prefs.getString('guestId');
-      print("👤 Retained guest ID after login: $guestId");
-      // 🔁 Redirect based on shared calendar presence
-
-      final seenTutorial = prefs.getBool('seenTutorial') ?? false;
-
-      if (seenTutorial) {
-        await _handlePostLoginRedirect(); // go to calendar as usual
+      final serverSeen = await _getServerSeenTutorialIfAny();
+      if (serverSeen) {
+        await prefs.setBool('seenTutorial', true);
+        await _handlePostLoginRedirect();
       } else {
+        if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/onboarding');
       }
     } catch (e) {
-      print('Google Sign-In failed: $e');
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Google Sign-In failed')));
+      ).showSnackBar(const SnackBar(content: Text('Google Sign-In failed')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 700;
-
     return Scaffold(
       body:
           isMobile
@@ -283,7 +296,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
                   Expanded(child: _buildFormLayout()),
                   Expanded(
                     child: Container(
-                      decoration: BoxDecoration(
+                      decoration: const BoxDecoration(
                         image: DecorationImage(
                           image: AssetImage('assets/bg_login.png'),
                           fit: BoxFit.cover,
@@ -301,15 +314,11 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: 400),
+          constraints: const BoxConstraints(maxWidth: 400),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Image.asset(
-                'assets/logo_final.png',
-                height: 170,
-                fit: BoxFit.contain,
-              ),
+              Image.asset('assets/logo_final.png', height: 170),
               const SizedBox(height: 32),
               _buildLoginForm(),
             ],
@@ -327,7 +336,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
         children: [
           Text(
             isLogin ? 'Welcome Back' : 'Let’s Get Started',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
@@ -337,7 +346,6 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
                 : 'Create your account to start collaborating.',
             textAlign: TextAlign.center,
           ),
-
           const SizedBox(height: 24),
           if (error != null)
             Card(
@@ -347,7 +355,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
                 child: Row(
                   children: [
                     Icon(Icons.error, color: Colors.red[700]),
-                    SizedBox(width: 10),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Text(
                         error!,
@@ -361,7 +369,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
           const SizedBox(height: 8),
           TextFormField(
             controller: _emailController,
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               labelText: 'Email',
               border: OutlineInputBorder(),
             ),
@@ -379,45 +387,44 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
           TextFormField(
             controller: _passwordController,
             obscureText: true,
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               labelText: 'Password',
               border: OutlineInputBorder(),
             ),
-            validator: (value) {
-              if (value == null || value.length < 6) {
-                return 'Minimum 6 characters';
-              }
-              return null;
-            },
+            validator:
+                (value) =>
+                    value == null || value.length < 6
+                        ? 'Minimum 6 characters'
+                        : null,
           ),
           const SizedBox(height: 24),
           ElevatedButton(
             onPressed: isLoading ? null : _loginOrSignUp,
             style: ElevatedButton.styleFrom(
-              backgroundColor: Color(0xFFCBDCEB),
+              backgroundColor: const Color(0xFFCBDCEB),
               foregroundColor: Colors.black87,
-              padding: EdgeInsets.symmetric(vertical: 14),
+              padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(24),
               ),
             ),
             child:
                 isLoading
-                    ? CircularProgressIndicator(color: Colors.black)
+                    ? const CircularProgressIndicator(color: Colors.black)
                     : Text(isLogin ? 'Login' : 'Sign Up'),
           ),
           const SizedBox(height: 12),
           ElevatedButton(
             onPressed: _signInWithGoogle,
             style: ElevatedButton.styleFrom(
-              backgroundColor: Color(0xFFCBDCEB),
+              backgroundColor: const Color(0xFFCBDCEB),
               foregroundColor: Colors.black87,
-              padding: EdgeInsets.symmetric(vertical: 14),
+              padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(24),
               ),
             ),
-            child: Row(
+            child: const Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(Icons.g_mobiledata),
@@ -436,19 +443,53 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
             ),
           ),
           const SizedBox(height: 24),
-          Divider(),
+          const Divider(),
           const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: _continueAsGuest,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Color(0xFFCBDCEB),
-              foregroundColor: Colors.black87,
-              padding: EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
+
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _continueAsGuest,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFCBDCEB),
+                    foregroundColor: Colors.black87,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                  ),
+                  child: const Text('Continue as Guest'),
+                ),
               ),
-            ),
-            child: Text('Continue as Guest'),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.info_outline, color: Colors.grey),
+                tooltip: "About Guest Login",
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder:
+                        (ctx) => AlertDialog(
+                          title: const Text("⚠️ About Guest Login"),
+                          content: const Text(
+                            "Guest Login is stored only on this browser.\n\n"
+                            "• If you clear your browser cache, switch devices, or use incognito mode, "
+                            "your guest calendars and events may be lost.\n\n"
+                            "• To keep your data safe across devices, sign up with Email or Google instead.",
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx),
+                              child: const Text("Got it"),
+                            ),
+                          ],
+                        ),
+                  );
+                },
+              ),
+            ],
           ),
         ],
       ),

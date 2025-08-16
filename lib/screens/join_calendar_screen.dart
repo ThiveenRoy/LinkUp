@@ -39,7 +39,8 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
     final currentId = await getCurrentUserId(); // guaranteed non-null
 
     // Find the calendar by shared link id
-    final query = await FirebaseFirestore.instance.collection('calendars').get();
+    final query =
+        await FirebaseFirestore.instance.collection('calendars').get();
 
     for (final doc in query.docs) {
       final data = doc.data();
@@ -48,34 +49,75 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
         calendarName = (data['name'] ?? '').toString();
         calendarId = doc.id;
 
-        // Owner field in your other screens is 'owner' (not 'ownerId'), so handle both
+        // ---------- Owner name resolution (robust) ----------
+        // Accept both 'owner' and 'ownerId'
         final ownerId = (data['owner'] ?? data['ownerId'])?.toString();
-        if (ownerId != null && ownerId.isNotEmpty) {
-          final ownerDoc = await FirebaseFirestore.instance
-              .collection('users')
-              .doc(ownerId)
-              .get();
-          ownerName = ownerDoc.exists
-              ? (ownerDoc.data()?['displayName'] ??
-                  ownerDoc.data()?['email'] ??
-                  'Anonymous')
-              : 'Anonymous';
-        }
+
+        // Try 1: explicit ownerName saved on the calendar (if you set it at creation)
+        String? resolvedOwnerName = (data['ownerName'] as String?)?.trim();
 
         // Members can be strings or maps in your data model; handle both safely
         final rawMembers = (data['members'] ?? []) as List<dynamic>;
-        final normalized = rawMembers.map<String>((m) {
-          if (m is String) return m;
-          if (m is Map && m['id'] != null) return m['id'].toString();
-          return '';
-        }).where((e) => e.isNotEmpty).toList();
+
+        // Try 2: find the owner inside members[] and use their stored 'name' (covers guest owners)
+        if ((resolvedOwnerName == null || resolvedOwnerName.isEmpty) &&
+            ownerId != null &&
+            ownerId.isNotEmpty) {
+          try {
+            final ownerMember = rawMembers
+                .map<Map<String, dynamic>?>(
+                    (m) => (m is Map<String, dynamic>) ? m : null)
+                .firstWhere(
+                    (m) => (m?['id']?.toString() ?? '') == ownerId,
+                    orElse: () => null);
+            if (ownerMember != null) {
+              resolvedOwnerName = (ownerMember['name'] as String?)?.trim();
+            }
+          } catch (_) {}
+        }
+
+        // Try 3: look up users/{ownerId} (covers email/Google owners)
+        if ((resolvedOwnerName == null || resolvedOwnerName.isEmpty) &&
+            ownerId != null &&
+            ownerId.isNotEmpty) {
+          try {
+            final ownerDoc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(ownerId)
+                .get();
+            if (ownerDoc.exists) {
+              resolvedOwnerName =
+                  (ownerDoc.data()?['displayName'] as String?)?.trim();
+              resolvedOwnerName ??=
+                  (ownerDoc.data()?['email'] as String?)?.trim();
+            }
+          } catch (_) {}
+        }
+
+        // Final fallback
+        ownerName = (resolvedOwnerName == null || resolvedOwnerName.isEmpty)
+            ? 'Anonymous'
+            : resolvedOwnerName;
+        // ---------- /owner name resolution ----------
+
+        // Normalize member IDs to check if current user is already joined
+        final normalized = rawMembers
+            .map<String>((m) {
+              if (m is String) return m;
+              if (m is Map && m['id'] != null) return m['id'].toString();
+              return '';
+            })
+            .where((e) => e.isNotEmpty)
+            .toList();
 
         isAlreadyJoined = normalized.contains(currentId);
         memberCount = rawMembers.length;
 
         // Save whether this link grants edit access
         final canEditViaLink = (data['sharedLinkEdit'] == widget.sharedLinkId);
-        await prefs.setBool('editAccess_$calendarId', canEditViaLink);
+        if (calendarId != null) {
+          await prefs.setBool('editAccess_$calendarId', canEditViaLink);
+        }
 
         setState(() => isLoading = false);
         return;
@@ -88,7 +130,36 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
     });
   }
 
-  Future<void> joinCalendar() async {
+  /// 🚪 First-time aware "Join as Guest":
+  /// If tutorial not seen, stash invite and go to onboarding.
+  /// Otherwise, proceed to actually join.
+  Future<void> _joinAsGuestFirstTimeAware() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Ensure guest session flags are present (guest_helper creates/ensures ID)
+    await ensureAuthSession();
+    await prefs.setBool('hasContinuedAsGuest', true);
+
+    final seenTutorial = prefs.getBool('seenTutorial') ?? false;
+    if (!seenTutorial) {
+      // Stash the *invite link id* so AuthLandingScreen sends us back here
+      await prefs.setString('pendingInviteId', widget.sharedLinkId);
+      // Legacy key support (some older code may check this):
+      if (calendarId != null) {
+        await prefs.setString('pendingSharedCalendarId', calendarId!);
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed('/onboarding');
+      return; // IMPORTANT: stop here
+    }
+
+    // Already onboarded → actually join the calendar
+    await _joinCalendarInternal();
+  }
+
+  /// 👥 Join as a member (used for logged-in users OR after onboarding guest)
+  Future<void> _joinCalendarInternal() async {
     // Ensure (again) we have an auth/guest session in case user waited long or reloaded
     await ensureAuthSession();
 
@@ -97,9 +168,9 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
     final displayName = (await getCurrentUserName()) ?? 'Anonymous';
 
     if (calendarId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Missing calendar ID.")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Missing calendar ID.")));
       return;
     }
 
@@ -122,10 +193,7 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
             .doc(guestId)
             .collection('sharedCalendars')
             .doc(calendarId)
-            .set({
-          'calendarName': calendarName,
-          'joinedAt': Timestamp.now(),
-        });
+            .set({'calendarName': calendarName, 'joinedAt': Timestamp.now()});
       }
 
       if (!mounted) return;
@@ -147,10 +215,10 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
               .collection('calendars')
               .doc(calendarId)
               .set({
-            'members': [
-              {'id': currentId, 'name': displayName},
-            ],
-          }, SetOptions(merge: true));
+                'members': [
+                  {'id': currentId, 'name': displayName},
+                ],
+              }, SetOptions(merge: true));
 
           if (!mounted) return;
           Navigator.pushReplacementNamed(
@@ -169,19 +237,19 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
 
       debugPrint("❌ Failed to join: $e");
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error joining calendar: $e")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error joining calendar: $e")));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-
     return Scaffold(
       backgroundColor: const Color(0xFFF7F6FB),
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         title: const Text("Join Calendar"),
         backgroundColor: Colors.white,
         elevation: 1,
@@ -201,7 +269,9 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
                   child: Container(
                     constraints: const BoxConstraints(maxWidth: 500),
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 32),
+                      horizontal: 24,
+                      vertical: 32,
+                    ),
                     margin: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: Colors.white,
@@ -309,13 +379,11 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
                             ),
                           ),
                         ] else ...[
-                          ElevatedButton.icon(
-                            onPressed: joinCalendar,
-                            icon: const Icon(Icons.person_add_alt_1),
-                            label: Text(
-                                (user != null && !(user.isAnonymous))
-                                    ? "Join Calendar"
-                                    : "Join as Guest"),
+                          // Full-width button with inline info icon (Option 1)
+                          ElevatedButton(
+                            onPressed: (user != null && !(user.isAnonymous))
+                                ? _joinCalendarInternal // logged in → join immediately
+                                : _joinAsGuestFirstTimeAware, // guest → onboarding-aware
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF3F72AF),
                               foregroundColor: Colors.white,
@@ -324,15 +392,74 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.person_add_alt_1),
+                                const SizedBox(width: 8),
+                                Text(
+                                  (user != null && !(user.isAnonymous))
+                                      ? "Join Calendar"
+                                      : "Join as Guest",
+                                ),
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: () {
+                                    showDialog(
+                                      context: context,
+                                      builder: (ctx) => AlertDialog(
+                                        title: const Text(
+                                            "⚠️ About Guest Access"),
+                                        content: const Text(
+                                          "Guest access is stored only on this device/browser.\n\n"
+                                          "• If you clear your browser cache, switch devices, or use incognito mode, "
+                                          "you may lose access to your guest calendars.\n\n"
+                                          "• To keep calendars safe across devices, log in with Email or Google.",
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(ctx),
+                                            child: const Text("Got it"),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                  child: const Icon(
+                                    Icons.info_outline,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+                          // ⬇️ NOTE: this comma after ElevatedButton is what fixes your "]" error
                           if (user == null || user.isAnonymous) ...[
                             const SizedBox(height: 12),
                             OutlinedButton(
                               onPressed: () async {
                                 final prefs =
                                     await SharedPreferences.getInstance();
+
+                                // Stash invite so we return here after real login
                                 await prefs.setString(
-                                    'pendingSharedCalendarId', calendarId!);
+                                  'pendingInviteId',
+                                  widget.sharedLinkId,
+                                );
+                                if (calendarId != null) {
+                                  await prefs.setString(
+                                    'pendingSharedCalendarId',
+                                    calendarId!,
+                                  );
+                                }
+
+                                // 🔑 Clear guest session so Auth screen doesn't auto-redirect back to Join
+                                await prefs.remove('guestId');
+                                await prefs.setBool(
+                                    'hasContinuedAsGuest', false);
+
                                 if (!mounted) return;
                                 Navigator.pushNamedAndRemoveUntil(
                                   context,

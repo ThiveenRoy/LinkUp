@@ -271,7 +271,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                     DateTime(end.year, end.month, end.day, 23, 59, 59);
 
                 final displayTitle = (ownerId != _currentUserId)
-                    ? '${data['title']} ($calendarName)'
+                    ? '${data['title']}'
                     : (data['title'] ?? '');
 
                 colors[d.id] = _colorForId(d.id);
@@ -741,8 +741,8 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     }
 
     bool allowEdit = data['allowEdit'] ?? false;
-    String editLink = 'https://linkupcalendar.app/#/cal/${data['sharedLinkEdit']}';
-    String viewLink = 'https://linkupcalendar.app/#/cal/${data['sharedLinkView']}';
+    String editLink = 'http://localhost:5000/#/cal/${data['sharedLinkEdit']}';
+    String viewLink = 'http://localhost:5000/#/cal/${data['sharedLinkView']}';
 
     final TextEditingController linkController =
         TextEditingController(text: allowEdit ? editLink : viewLink);
