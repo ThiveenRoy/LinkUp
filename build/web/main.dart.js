@@ -103180,8 +103180,8 @@ break}h=J.U(o)
 n=h.h(o,"allowEdit")
 if(n==null)n=!1
 i.a=n
-m="http://localhost:5000/#/cal/"+A.n(h.h(o,"sharedLinkEdit"))
-l="http://localhost:5000/#/cal/"+A.n(h.h(o,"sharedLinkView"))
+m="https://linkupcalendar.app/#/cal/"+A.n(h.h(o,"sharedLinkEdit"))
+l="https://linkupcalendar.app/#/cal/"+A.n(h.h(o,"sharedLinkView"))
 h=n?m:l
 k=$.as()
 j=p.c
