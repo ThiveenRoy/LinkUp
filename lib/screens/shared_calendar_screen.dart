@@ -1,6 +1,7 @@
 // 🔄 SharedCalendarScreen with Day/Month agenda, real-time stream,
-//     and visible creator names for guests & users
+//     visible creator names, and member join/leave toasts for EVERYONE
 
+import 'dart:async';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -43,10 +44,17 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
   _AgendaView _agendaView = _AgendaView.day;
 
   String? _currentUserId;
+  String? _ownerId;
   Map<String, dynamic>? _calendarData;
   bool _canEdit = false;
   List<Map<String, String>> _participants = [];
   bool _isMember = false;
+
+  // 👇 Member join/leave listener state
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _memberSub;
+  Set<String> _seenMemberIds = {};
+  Set<String> _everSeenMemberIds = {}; // suppress rejoin spam this session
+  bool _membersInitialized = false;
 
   final Color bgColor = const Color(0xFFF9F7F7);
   final Color lightCard = const Color(0xFFDBE2EF);
@@ -62,12 +70,159 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     _userIdFuture.then((id) async {
       _currentUserId = id;
       if (widget.calendarId != null) {
-        await _loadPermissions();
-        _loadCalendarDetails();
-        _loadMembers();
-        setState(() {});
+        await _loadPermissions(); // sets _ownerId, _canEdit, _isMember
+        await _loadCalendarDetails(); // sets _calendarData
+        await _loadMembers(); // initial avatars
+        _startMemberListener(widget.calendarId!);
+        if (mounted) setState(() {});
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _memberSub?.cancel();
+    super.dispose();
+  }
+
+  void _showNiceToast(
+    String msg, {
+    IconData icon = Icons.person,
+    Color? color,
+  }) {
+    final c = color ?? buttonColor;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+        margin: const EdgeInsets.all(12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: c,
+        content: Row(
+          children: [
+            Icon(icon, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                msg,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white, // <-- white text
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _startMemberListener(String calendarId) {
+    _memberSub?.cancel();
+    _memberSub = FirebaseFirestore.instance
+        .collection('calendars')
+        .doc(calendarId)
+        .snapshots()
+        .listen((snap) {
+          final data = snap.data();
+          if (data == null) return;
+
+          final List rawMembers = (data['members'] ?? []) as List;
+
+          // Build current participants from snapshot
+          final List<Map<String, String>> currentParticipants =
+              rawMembers.map<Map<String, String>>((e) {
+                if (e is Map) {
+                  return {
+                    'id': (e['id'] ?? '').toString(),
+                    'name': (e['name'] ?? 'Anonymous').toString(),
+                  };
+                } else {
+                  return {'id': e.toString(), 'name': 'Anonymous'};
+                }
+              }).toList();
+
+          // Prepare ID sets for diff
+          final Set<String> prevIds =
+              _participants
+                  .map((p) => p['id'] ?? '')
+                  .where((s) => s.isNotEmpty)
+                  .toSet();
+          final Set<String> currIds =
+              currentParticipants
+                  .map((p) => p['id'] ?? '')
+                  .where((s) => s.isNotEmpty)
+                  .toSet();
+
+          // Always update avatars first
+          if (mounted) {
+            setState(() {
+              _participants =
+                  currentParticipants; // <--- refresh AppBar avatars
+            });
+          }
+
+          // First load: seed & skip toasts
+          if (!_membersInitialized) {
+            _seenMemberIds = currIds;
+            _membersInitialized = true;
+            return;
+          }
+
+          // Compute diffs based on previous vs current
+          final Set<String> joined = currIds.difference(prevIds);
+          final Set<String> left = prevIds.difference(currIds);
+
+          // Show toasts (everyone sees them)
+          if (left.isNotEmpty) {
+            final names =
+                left.map((id) {
+                  final m = (_participants.isEmpty
+                          ? []
+                          : _participants) // currently updated list has no leavers
+                      .firstWhere(
+                        (p) => p['id'] == id,
+                        orElse: () {
+                          // fallback to previous list (where they still existed)
+                          // ignore: unused_local_variable
+                          final prev =
+                              _participants; // if you keep a separate _prevParticipants, use that
+                          final hit = prevIds.contains(id);
+                          return {
+                            'name': hit ? 'A member' : 'A member',
+                          }; // safe fallback
+                        },
+                      );
+                  return (m['name'] ?? 'A member').toString();
+                }).toList();
+
+            _showNiceToast(
+              names.length == 1
+                  ? '${names.first} left the calendar'
+                  : '${names.join(", ")} left the calendar',
+              icon: Icons.logout,
+              color: Colors.redAccent,
+            );
+          }
+
+          if (joined.isNotEmpty) {
+            final names =
+                currentParticipants
+                    .where((p) => joined.contains(p['id']))
+                    .map((p) => (p['name'] ?? 'New member').toString())
+                    .toList();
+
+            _showNiceToast(
+              names.length == 1
+                  ? '${names.first} joined the calendar 🎉'
+                  : '${names.join(", ")} joined the calendar 🎉',
+              icon: Icons.person_add_alt_1,
+              color: buttonColor,
+            );
+          }
+
+          _seenMemberIds = currIds; // advance baseline
+        });
   }
 
   Future<void> _loadMembers() async {
@@ -145,12 +300,13 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     });
 
     setState(() {
+      _ownerId = ownerId;
       _isMember = isMember;
       _canEdit = isOwner || (allowEdit && hasGuestEditAccess);
     });
   }
 
-  void _loadCalendarDetails() async {
+  Future<void> _loadCalendarDetails() async {
     final doc =
         await FirebaseFirestore.instance
             .collection('calendars')
@@ -199,6 +355,42 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
         });
   }
 
+  // (Optional) Call this from a menu/button to leave the calendar.
+  Future<void> leaveCalendar() async {
+    final prefs = await SharedPreferences.getInstance();
+    final uid =
+        FirebaseAuth.instance.currentUser?.uid ?? prefs.getString('guestId');
+    if (uid == null) return;
+
+    final docRef = FirebaseFirestore.instance
+        .collection('calendars')
+        .doc(widget.calendarId);
+    await FirebaseFirestore.instance.runTransaction((tx) async {
+      final snap = await tx.get(docRef);
+      final data = snap.data() as Map<String, dynamic>?;
+
+      if (data == null) return;
+      final List members = (data['members'] ?? []) as List;
+
+      final newMembers =
+          members.where((m) {
+            if (m is Map && m['id'] != null) return m['id'].toString() != uid;
+            return m.toString() != uid;
+          }).toList();
+
+      tx.update(docRef, {'members': newMembers});
+    });
+
+    if (mounted) {
+      _showNiceToast(
+        'You left this calendar',
+        icon: Icons.logout,
+        color: Colors.deepOrange,
+      );
+      widget.onBackToList?.call();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.calendarId == null) {
@@ -217,8 +409,13 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Row(
-              children:
-                  _participants.take(10).map((user) {
+              children: () {
+                const maxAvatars = 5; // 👈 show up to 5 avatars
+                final visible = _participants.take(maxAvatars).toList();
+                final extra = _participants.length - visible.length;
+
+                return [
+                  ...visible.map((user) {
                     final name = user['name'] ?? 'Anonymous';
                     final id = user['id'] ?? '';
                     final isOwner = id == _calendarData?['owner'];
@@ -242,7 +439,25 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                         ),
                       ),
                     );
-                  }).toList(),
+                  }),
+                  if (extra > 0) // 👈 show +N overflow if more members
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      child: CircleAvatar(
+                        radius: 12,
+                        backgroundColor: Colors.grey[600],
+                        child: Text(
+                          '+$extra',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ];
+              }(),
             ),
           ),
           if (_calendarData != null &&
@@ -343,7 +558,6 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                   storedCreator.isNotEmpty
                       ? storedCreator
                       : fallbackFromMembers;
-
               final calendarName =
                   (event['calendarName'] ?? '').toString().trim();
 
@@ -476,12 +690,10 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                 canEdit: _canEdit,
                                 disallowPastDates: true,
                                 existingEvent: event,
-                                updatedById:
-                                    _currentUserId, // <- event-level audit (optional but recommended)
+                                updatedById: _currentUserId,
                                 updatedByName: editorName,
                                 onAfterWrite:
                                     () => _touchCalendar(
-                                      // <- calendar-level audit
                                       byId: _currentUserId,
                                       byName: editorName,
                                     ),
@@ -489,7 +701,6 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                 textDark: textDark,
                               );
                             },
-
                             child: const Text('Edit'),
                           ),
                         if (_canEdit)
@@ -718,21 +929,18 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                   return ElevatedButton.icon(
                                     onPressed: () async {
                                       final editorName =
-                                          await _resolveDisplayName(); // who is adding
+                                          await _resolveDisplayName();
                                       await EventCrud.showAddOrEditDialog(
                                         context: context,
                                         getEventsCollection: _sharedEventsCol,
                                         canEdit: _canEdit,
                                         disallowPastDates: true,
                                         existingEvent: null,
-                                        creatorId:
-                                            _currentUserId, // stored on event
+                                        creatorId: _currentUserId,
                                         creatorName: editorName,
-                                        initialSelectedDay:
-                                            _selectedDay, // keeps 21 when you chose 21
+                                        initialSelectedDay: _selectedDay,
                                         onAfterWrite:
                                             () => _touchCalendar(
-                                              // update calendar doc
                                               byId: _currentUserId,
                                               byName: editorName,
                                             ),
@@ -817,8 +1025,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     );
   }
 
-  // ===== Share modal (unchanged) =====
-
+  // ===== Share modal =====
   void _showShareModal(String calendarId) async {
     final calendarDoc =
         await FirebaseFirestore.instance
@@ -837,8 +1044,8 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     }
 
     bool allowEdit = data['allowEdit'] ?? false;
-    String editLink = 'https://linkupcalendar.app/#/cal/${data['sharedLinkEdit']}';
-    String viewLink = 'https://linkupcalendar.app/#/cal/${data['sharedLinkView']}';
+    String editLink = 'http://localhost:5000/#/cal/${data['sharedLinkEdit']}';
+    String viewLink = 'http://localhost:5000/#/cal/${data['sharedLinkView']}';
 
     final TextEditingController linkController = TextEditingController(
       text: allowEdit ? editLink : viewLink,
