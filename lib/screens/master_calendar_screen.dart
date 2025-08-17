@@ -8,6 +8,9 @@ import 'package:shared_calendar/utils/guest_helper.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 
+// ✅ shared CRUD helper
+import '../common/event_crud.dart';
+
 class MasterCalendarScreen extends StatefulWidget {
   const MasterCalendarScreen({super.key});
 
@@ -35,6 +38,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   final Color textDark = const Color(0xFF112D4E);
 
   DateTime _startOfDay(DateTime d) => DateTime(d.year, d.month, d.day);
+  // ignore: unused_element
   bool _isBeforeToday(DateTime d) =>
       _startOfDay(d).isBefore(_startOfDay(DateTime.now()));
 
@@ -76,13 +80,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     return '$selectedDateFormatted, $startTime – $endTime';
   }
 
-  Future<void> _saveEvent({
-    required String title,
-    required String description,
-    required DateTime start,
-    required DateTime end,
-    Map<String, dynamic>? event,
-  }) async {
+  /// 🔧 Returns the Events collection for the user's personal (master) calendar.
+  /// If it doesn't exist, it creates it (same logic as your _saveEvent before).
+  Future<CollectionReference<Map<String, dynamic>>> _personalEventsCol() async {
     final user = FirebaseAuth.instance.currentUser;
     final prefs = await SharedPreferences.getInstance();
     final currentUserId = user?.uid ?? prefs.getString('guestId');
@@ -91,43 +91,28 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
         .collection('calendars')
         .where('owner', isEqualTo: currentUserId)
         .where('isShared', isEqualTo: false)
+        .limit(1)
         .get();
 
-    final personalCalendarId = calendarsSnap.docs.isEmpty
-        ? (await FirebaseFirestore.instance.collection('calendars').add({
-            'name': 'My Calendar',
-            'owner': currentUserId,
-            'members': [currentUserId],
-            'isShared': false,
-            'createdAt': Timestamp.now(),
-          }))
-            .id
-        : calendarsSnap.docs.first.id;
-
-    final data = {
-      'title': title,
-      'description': description,
-      'startTime': Timestamp.fromDate(start),
-      'endTime': Timestamp.fromDate(end),
-    };
-
-    if (event == null) {
-      await FirebaseFirestore.instance
-          .collection('calendars')
-          .doc(personalCalendarId)
-          .collection('events')
-          .add(data);
+    final String personalCalendarId;
+    if (calendarsSnap.docs.isEmpty) {
+      personalCalendarId =
+          (await FirebaseFirestore.instance.collection('calendars').add({
+        'name': 'My Calendar',
+        'owner': currentUserId,
+        'members': [currentUserId],
+        'isShared': false,
+        'createdAt': Timestamp.now(),
+      }))
+              .id;
     } else {
-      await FirebaseFirestore.instance
-          .collection('calendars')
-          .doc(event['calendarId'])
-          .collection('events')
-          .doc(event['id'])
-          .update(data);
+      personalCalendarId = calendarsSnap.docs.first.id;
     }
 
-    if (mounted) Navigator.pop(context);
-    _loadEvents();
+    return FirebaseFirestore.instance
+        .collection('calendars')
+        .doc(personalCalendarId)
+        .collection('events');
   }
 
   Future<void> _loadEvents() async {
@@ -144,8 +129,8 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
     for (final doc in calendarQuery.docs) {
       final calendarId = doc.id;
+      final calendarName = (doc['name'] ?? 'Shared Calendar').toString();
       final isShared = doc['isShared'] ?? false;
-      final calendarName = doc['name'] ?? 'Shared Calendar';
 
       final rawMembers = doc['members'] ?? [];
       final members = rawMembers.map<String>((m) {
@@ -166,13 +151,11 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
         final data = eventDoc.data();
         final start = (data['startTime'] as Timestamp).toDate();
         final end = (data['endTime'] as Timestamp).toDate();
-        final normalizedEnd = DateTime(end.year, end.month, end.day, 23, 59, 59);
+        final normalizedEnd =
+            DateTime(end.year, end.month, end.day, 23, 59, 59);
 
-        final rawTitle = data['title'] ?? '';
-        final title =
-            isShared && !rawTitle.toString().contains(calendarName)
-                ? '$rawTitle ($calendarName)'
-                : rawTitle;
+        final title = (data['title'] ?? '').toString();
+        final creatorName = ((data['creatorName'] ?? '') as String).trim();
 
         final color = Color.fromARGB(
           255,
@@ -186,12 +169,14 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
             !d.isAfter(normalizedEnd);
             d = d.add(const Duration(days: 1))) {
           final dateOnly = DateTime(d.year, d.month, d.day);
-          tempEvents[dateOnly] ??= [];
-          tempEvents[dateOnly]!.add({
+          (tempEvents[dateOnly] ??= []).add({
             ...data,
             'id': eventDoc.id,
             'calendarId': calendarId,
             'title': title,
+            'creatorName': creatorName, // for the card line
+            'calendarName': calendarName,
+            'isShared': isShared,
           });
         }
       }
@@ -209,104 +194,139 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     return _events[DateTime(day.year, day.month, day.day)] ?? [];
   }
 
-  // —— UI bits ———————————————————————————————————————————————
+  // —— UI ——
 
-  Widget _buildEventCard(Map<String, dynamic> event,
-      {DateTime? displayDate}) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: lightCard,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: const [BoxShadow(blurRadius: 4, color: Colors.black12)],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Bullet + Title
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text('•',
-                    style:
-                        TextStyle(fontSize: 20, height: 1.2, color: textDark)),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${event['title']}',
+  Widget _buildEventCard(Map<String, dynamic> event, {DateTime? displayDate}) {
+  final String creator = (event['creatorName'] ?? '').toString().trim();
+  final String calendarName = (event['calendarName'] ?? '').toString().trim();
+
+  // ✅ Only treat as shared if explicitly marked so by _loadEvents()
+  final bool isSharedEvent = event['isShared'] == true;
+
+  return Container(
+    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: lightCard,
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: const [BoxShadow(blurRadius: 4, color: Colors.black12)],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('•',
+                  style:
+                      TextStyle(fontSize: 20, height: 1.2, color: textDark)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${event['title']}',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: textDark,
+                        height: 1.2,
+                      )),
+
+                  // ✅ Show this ONLY for shared events AND only when we have a creator
+                  if (isSharedEvent && creator.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        calendarName.isNotEmpty
+                            ? 'by $creator on $calendarName'
+                            : 'by $creator',
                         style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: textDark.withOpacity(0.7),
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+
+                  if (event['startTime'] != null && event['endTime'] != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        _formatEventTime(
+                          displayDate ?? _selectedDay,
+                          (event['startTime'] as Timestamp?)?.toDate(),
+                          (event['endTime'] as Timestamp?)?.toDate(),
+                        ),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
                           color: textDark,
-                          height: 1.2,
-                        )),
-                    if (event['startTime'] != null && event['endTime'] != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(
-                          _formatEventTime(
-                            displayDate ?? _selectedDay,
-                            (event['startTime'] as Timestamp?)?.toDate(),
-                            (event['endTime'] as Timestamp?)?.toDate(),
-                          ),
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: textDark,
-                          ),
                         ),
                       ),
-                    if ((event['description'] ?? '').toString().isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(
-                          event['description'],
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w300,
-                            fontFamily: 'Roboto',
-                            color: textDark.withOpacity(0.85),
-                          ),
+                    ),
+                  if ((event['description'] ?? '').toString().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        event['description'],
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w300,
+                          fontFamily: 'Roboto',
+                          color: textDark.withOpacity(0.85),
                         ),
                       ),
-                  ],
-                ),
+                    ),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          // Buttons
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () => _showEventDialog(event: event),
-                child: const Text('Edit'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  await FirebaseFirestore.instance
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () async {
+                await EventCrud.showAddOrEditDialog(
+                  context: context,
+                  getEventsCollection: () async => FirebaseFirestore.instance
                       .collection('calendars')
                       .doc(event['calendarId'])
-                      .collection('events')
-                      .doc(event['id'])
-                      .delete();
-                  _loadEvents();
-                },
-                child: const Text('Delete'),
+                      .collection('events'),
+                  canEdit: true,
+                  disallowPastDates: true,
+                  existingEvent: event,
+                  buttonColor: buttonColor,
+                  textDark: textDark,
+                  onAfterWrite: _loadEvents,
+                );
+              },
+              child: const Text('Edit'),
+            ),
+            TextButton(
+              onPressed: () => EventCrud.confirmAndDelete(
+                context: context,
+                getEventsCollection: () async => FirebaseFirestore.instance
+                    .collection('calendars')
+                    .doc(event['calendarId'])
+                    .collection('events'),
+                eventId: event['id'],
+                onAfterDelete: _loadEvents,
               ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
 
   Widget _buildMonthAgenda() {
     final first = DateTime(_focusedDay.year, _focusedDay.month, 1);
@@ -343,274 +363,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     return Column(children: items);
   }
 
-  // Dialog for add/edit (kept from your version, with past/ordering checks)
-  void _showEventDialog({Map<String, dynamic>? event}) {
-    if (_selectedDay.isBefore(
-      DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day),
-    )) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("You can't create events in the past.")),
-      );
-      return;
-    }
-
-    DateTime selectedStart = event?['startTime']?.toDate() ??
-        DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day, 0, 0);
-    DateTime selectedEnd = event?['endTime']?.toDate() ??
-        DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day, 0, 0);
-
-    final titleController = TextEditingController(text: event?['title'] ?? '');
-    final descriptionController =
-        TextEditingController(text: event?['description'] ?? '');
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(builder: (context, setModalState) {
-          return AlertDialog(
-            backgroundColor: Colors.white,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
-            title: Text(
-              event == null ? 'Add Event' : 'Edit Event',
-              style: TextStyle(
-                color: textDark,
-                fontWeight: FontWeight.bold,
-                fontSize: 20,
-              ),
-            ),
-            content: SizedBox(
-              width:
-                  MediaQuery.of(context).size.width > 500 ? 400 : double.maxFinite,
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextField(
-                      controller: titleController,
-                      decoration: InputDecoration(
-                        labelText: 'Title',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFFF1F5F9),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: descriptionController,
-                      minLines: 3,
-                      maxLines: 5,
-                      decoration: InputDecoration(
-                        labelText: 'Description',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFFF1F5F9),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    // Start
-                    Text("Start:",
-                        style: TextStyle(
-                            color: textDark, fontWeight: FontWeight.w600)),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title:
-                          Text(DateFormat('dd-MM-yyyy').format(selectedStart)),
-                      trailing: Icon(Icons.calendar_today, color: buttonColor),
-                      onTap: () async {
-                        final today0 = _startOfDay(DateTime.now());
-                        final init = _startOfDay(selectedStart).isBefore(today0)
-                            ? today0
-                            : selectedStart;
-
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: init,
-                          firstDate: today0,
-                          lastDate: DateTime(2100),
-                          selectableDayPredicate: (d) => !_isBeforeToday(d),
-                        );
-                        if (picked != null) {
-                          setModalState(() {
-                            selectedStart = DateTime(
-                              picked.year,
-                              picked.month,
-                              picked.day,
-                              selectedStart.hour,
-                              selectedStart.minute,
-                            );
-                            if (_startOfDay(selectedEnd)
-                                .isBefore(_startOfDay(selectedStart))) {
-                              selectedEnd = DateTime(
-                                picked.year,
-                                picked.month,
-                                picked.day,
-                                selectedEnd.hour,
-                                selectedEnd.minute,
-                              );
-                            }
-                          });
-                        }
-                      },
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(DateFormat('hh:mm a').format(selectedStart)),
-                      trailing: Icon(Icons.access_time, color: buttonColor),
-                      onTap: () async {
-                        final time = await showTimePicker(
-                          context: context,
-                          initialTime: const TimeOfDay(hour: 0, minute: 0),
-                        );
-                        if (time != null) {
-                          setModalState(() {
-                            selectedStart = DateTime(
-                              selectedStart.year,
-                              selectedStart.month,
-                              selectedStart.day,
-                              time.hour,
-                              time.minute,
-                            );
-                          });
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    // End
-                    Text("End:",
-                        style: TextStyle(
-                            color: textDark, fontWeight: FontWeight.w600)),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(DateFormat('dd-MM-yyyy').format(selectedEnd)),
-                      trailing: Icon(Icons.calendar_today, color: buttonColor),
-                      onTap: () async {
-                        final today0 = _startOfDay(DateTime.now());
-                        final floor =
-                            _startOfDay(selectedStart).isBefore(today0)
-                                ? today0
-                                : _startOfDay(selectedStart);
-                        final initEnd =
-                            _startOfDay(selectedEnd).isBefore(floor)
-                                ? floor
-                                : selectedEnd;
-
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: initEnd,
-                          firstDate: floor,
-                          lastDate: DateTime(2100),
-                          selectableDayPredicate:
-                              (d) => !_isBeforeToday(d) && !d.isBefore(floor),
-                        );
-                        if (picked != null) {
-                          setModalState(() {
-                            selectedEnd = DateTime(
-                              picked.year,
-                              picked.month,
-                              picked.day,
-                              selectedEnd.hour,
-                              selectedEnd.minute,
-                            );
-                          });
-                        }
-                      },
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(DateFormat('hh:mm a').format(selectedEnd)),
-                      trailing: Icon(Icons.access_time, color: buttonColor),
-                      onTap: () async {
-                        final time = await showTimePicker(
-                          context: context,
-                          initialTime: const TimeOfDay(hour: 0, minute: 0),
-                        );
-                        if (time != null) {
-                          setModalState(() {
-                            selectedEnd = DateTime(
-                              selectedEnd.year,
-                              selectedEnd.month,
-                              selectedEnd.day,
-                              time.hour,
-                              time.minute,
-                            );
-                          });
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton(
-                    onPressed: () {
-                      final title = titleController.text.trim();
-                      final description = descriptionController.text.trim();
-
-                      if (title.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Please enter a title.')),
-                        );
-                        return;
-                      }
-
-                      final today0 = _startOfDay(DateTime.now());
-                      if (_startOfDay(selectedStart).isBefore(today0) ||
-                          _startOfDay(selectedEnd).isBefore(today0)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("Events can’t be created on past dates."),
-                          ),
-                        );
-                        return;
-                      }
-
-                      if (!selectedEnd.isAfter(selectedStart)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('End time must be after start time.'),
-                          ),
-                        );
-                        return;
-                      }
-
-                      _saveEvent(
-                        title: title,
-                        description: description,
-                        start: selectedStart,
-                        end: selectedEnd,
-                        event: event,
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: buttonColor,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: Text(event == null ? 'Add' : 'Update'),
-                  ),
-                ],
-              ),
-            ],
-          );
-        });
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 500;
@@ -629,9 +381,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       onPageChanged: (focusedDay) {
         setState(() {
           _focusedDay = focusedDay;
-          // carry selected day number (e.g., 18 → 18; 31 → 30/29/28)
           final carry = _selectedDay.day;
-          final lastDay = DateTime(focusedDay.year, focusedDay.month + 1, 0).day;
+          final lastDay =
+              DateTime(focusedDay.year, focusedDay.month + 1, 0).day;
           final newDay = min(carry, lastDay);
           _selectedDay = DateTime(focusedDay.year, focusedDay.month, newDay);
         });
@@ -681,8 +433,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
               );
               if (picked != null) {
                 final carry = _selectedDay.day;
-                final lastDay =
-                    DateTime(picked.year, picked.month + 1, 0).day;
+                final lastDay = DateTime(picked.year, picked.month + 1, 0).day;
                 final newDay = min(carry, lastDay);
                 setState(() {
                   _focusedDay = picked;
@@ -722,8 +473,10 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                     const EdgeInsets.symmetric(horizontal: 0.5, vertical: 1.5),
                 width: 6,
                 height: 6,
-                decoration:
-                    BoxDecoration(color: color, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
               );
             }).toList(),
           );
@@ -748,78 +501,88 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                     isMobile ? SizedBox(height: 440, child: calendarWidget) : calendarWidget,
                     const SizedBox(height: 12),
 
-                    // Responsive toolbar (chips + title + add button)
-                    // ⤵️ Replace your current toolbar Row with this Column
-Padding(
-  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-  child: Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      // Row 1: chips + add button (chips can wrap if space is tight)
-      Row(
-        children: [
-          // Chips
-          Expanded(
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ChoiceChip(
-                  label: const Text('Day'),
-                  selected: _agendaView == _AgendaView.day,
-                  onSelected: (_) => setState(() => _agendaView = _AgendaView.day),
-                ),
-                ChoiceChip(
-                  label: const Text('Month'),
-                  selected: _agendaView == _AgendaView.month,
-                  onSelected: (_) => setState(() => _agendaView = _AgendaView.month),
-                ),
-              ],
-            ),
-          ),
+                    // Toolbar
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    ChoiceChip(
+                                      label: const Text('Day'),
+                                      selected: _agendaView == _AgendaView.day,
+                                      onSelected: (_) =>
+                                          setState(() => _agendaView = _AgendaView.day),
+                                    ),
+                                    ChoiceChip(
+                                      label: const Text('Month'),
+                                      selected: _agendaView == _AgendaView.month,
+                                      onSelected: (_) =>
+                                          setState(() => _agendaView = _AgendaView.month),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Builder(builder: (context) {
+                                final compact =
+                                    MediaQuery.of(context).size.width < 360;
+                                return ElevatedButton.icon(
+                                  onPressed: () async {
+                                    // 👉 Seed Add dialog with the currently selected day
+                                    await EventCrud.showAddOrEditDialog(
+                                      context: context,
+                                      getEventsCollection: _personalEventsCol,
+                                      canEdit: true,
+                                      disallowPastDates: true,
+                                      existingEvent: null,
+                                      initialSelectedDay: _selectedDay,
+                                      onAfterWrite: _loadEvents,
+                                      buttonColor: buttonColor,
+                                      textDark: textDark,
+                                    );
+                                  },
+                                  icon: const Icon(Icons.add, size: 18),
+                                  label: Text(compact ? 'Add' : 'Add Event'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: lightCard,
+                                    foregroundColor: textDark,
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(30),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    textStyle: const TextStyle(fontSize: 13),
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            titleText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'Roboto',
+                              color: buttonColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
 
-          const SizedBox(width: 8),
-
-          // Add button (shorten label on very small screens)
-          Builder(builder: (context) {
-            final compact = MediaQuery.of(context).size.width < 360;
-            return ElevatedButton.icon(
-              onPressed: () => _showEventDialog(),
-              icon: const Icon(Icons.add, size: 18),
-              label: Text(compact ? 'Add' : 'Add Event'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: lightCard,
-                foregroundColor: textDark,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                textStyle: const TextStyle(fontSize: 13),
-              ),
-            );
-          }),
-        ],
-      ),
-
-      const SizedBox(height: 8),
-
-      // Row 2: the title, always on its own line
-      Text(
-  titleText, // ← uses day or month label correctly
-  maxLines: 1,
-  overflow: TextOverflow.ellipsis,
-  style: TextStyle(
-    fontSize: 14,
-    fontWeight: FontWeight.w600,
-    fontFamily: 'Roboto',
-    color: buttonColor,
-  ),
-),
-
-    ],
-  ),
-),
                     const SizedBox(height: 8),
 
                     // Agenda content

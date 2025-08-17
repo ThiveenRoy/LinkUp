@@ -61,7 +61,7 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
         'id': doc.id,
         'name': (doc['name'] ?? 'Untitled') as String,
         'lastUpdatedAt': lastUpdated,
-        'updatedByName': doc['updatedByName'] ?? 'Someone',
+        'updatedByName': doc['updatedByName'] ?? 'Guest',
         'updatedBy': doc['updatedBy'] ?? '',
         // your schema uses "owner"
         'ownerId': doc['owner'] ?? '',
