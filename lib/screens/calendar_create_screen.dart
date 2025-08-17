@@ -1,7 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_calendar/utils/guest_helper.dart';
+import '../utils/guest_helper.dart';
 import '../screens/calendar_home_screen.dart';
 
 void showCreateCalendarDialog(BuildContext context) {

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:shared_calendar/screens/calendar_home_screen.dart';
-import 'package:shared_calendar/screens/onboarding_screen.dart';
+import '../screens/calendar_home_screen.dart';
+import '../screens/onboarding_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class TutorialWrapper extends StatefulWidget {

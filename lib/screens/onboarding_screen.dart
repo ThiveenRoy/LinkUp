@@ -4,7 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 // Helpers used in your app (ensure the import path matches your project)
-import 'package:shared_calendar/utils/guest_helper.dart';
+import '../utils/guest_helper.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});

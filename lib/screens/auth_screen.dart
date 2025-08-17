@@ -5,7 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
-import 'package:shared_calendar/screens/join_calendar_screen.dart';
+import '../screens/join_calendar_screen.dart';
 
 class AuthLandingScreen extends StatefulWidget {
   @override
