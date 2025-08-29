@@ -5,6 +5,7 @@ import 'master_calendar_screen.dart';
 import 'shared_calendar_screen.dart';
 import 'shared_calendar_list.dart';
 
+
 class CalendarHomeScreen extends StatefulWidget {
   final String? calendarId;
   final String calendarName;
@@ -116,6 +117,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
         ],
       ),
       actions: [
+        const SizedBox(width: 4),
         TextButton.icon(
           icon: const Icon(Icons.logout, color: Colors.redAccent),
           label: const Text(
@@ -162,6 +164,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
                 if (v == 'logout') _logout(context);
               },
               itemBuilder: (ctx) => const [
+                PopupMenuItem(value: 'settings', child: Text('Settings')),
                 PopupMenuItem(value: 'logout', child: Text('Logout')),
               ],
             ),
@@ -198,7 +201,6 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
           children: [
             if (isMobile) mobileTopBar,
 
-            // Tutorial card
             if (_showTutorialCard)
               Card(
                 margin: const EdgeInsets.all(16),
@@ -224,7 +226,6 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
                 ),
               ),
 
-            // Content
             Expanded(
               child: TabBarView(
                 controller: _tabController,
