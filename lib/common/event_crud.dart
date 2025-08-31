@@ -10,13 +10,13 @@ class EventCrud {
   static Future<void> showAddOrEditDialog({
     required BuildContext context,
     required Future<CollectionReference<Map<String, dynamic>>> Function()
-    getEventsCollection,
+        getEventsCollection,
     required bool canEdit,
     required bool disallowPastDates,
     Map<String, dynamic>? existingEvent, // null => Add
     String? creatorId, // used on Add (shared)
     String? creatorName, // used on Add (shared)
-    DateTime? initialSelectedDay, // NEW: seed default date
+    DateTime? initialSelectedDay, // seed default date
     String? updatedById, // OPTIONAL: audit on Edit
     String? updatedByName, // OPTIONAL: audit on Edit
     Future<void> Function()? onAfterWrite,
@@ -35,10 +35,10 @@ class EventCrud {
     // Defaults: existing event → use event times; else default to seed day @ 00:00
     DateTime selectedStart =
         (existingEvent?['startTime'] as Timestamp?)?.toDate() ??
-        DateTime(seed0.year, seed0.month, seed0.day, 0, 0);
+            DateTime(seed0.year, seed0.month, seed0.day, 0, 0);
     DateTime selectedEnd =
         (existingEvent?['endTime'] as Timestamp?)?.toDate() ??
-        DateTime(seed0.year, seed0.month, seed0.day, 0, 0);
+            DateTime(seed0.year, seed0.month, seed0.day, 0, 0);
 
     final titleController = TextEditingController(
       text: existingEvent?['title'] ?? '',
@@ -49,298 +49,265 @@ class EventCrud {
 
     await showDialog(
       context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder: (context, setModalState) {
-              Future<void> pickDate({required bool isStart}) async {
-                // Disallow past dates if flag is on
-                final DateTime floor =
-                    isStart
-                        ? today0
-                        : (selectedStart.isBefore(today0)
-                            ? today0
-                            : DateTime(
-                              selectedStart.year,
-                              selectedStart.month,
-                              selectedStart.day,
-                            ));
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          Future<void> pickDate({required bool isStart}) async {
+            final DateTime today0 = DateTime.now()
+                .copyWith(hour: 0, minute: 0, second: 0, millisecond: 0, microsecond: 0);
 
-                final DateTime init =
-                    isStart
-                        ? (selectedStart.isBefore(today0)
-                            ? today0
-                            : selectedStart)
-                        : (selectedEnd.isBefore(floor) ? floor : selectedEnd);
+            // Disallow past dates if flag is on
+            final DateTime floor = isStart
+                ? today0
+                : (selectedStart.isBefore(today0)
+                    ? today0
+                    : DateTime(selectedStart.year, selectedStart.month, selectedStart.day));
 
-                final picked = await showDatePicker(
-                  context: context,
-                  initialDate: init,
-                  firstDate: disallowPastDates ? floor : DateTime(2000),
-                  lastDate: DateTime(2100),
-                  selectableDayPredicate: (d) {
-                    if (!disallowPastDates) return true;
-                    final d0 = DateTime(d.year, d.month, d.day);
-                    return !d0.isBefore(floor);
-                  },
-                );
-                if (picked != null) {
-                  setModalState(() {
-                    if (isStart) {
-                      selectedStart = DateTime(
-                        picked.year,
-                        picked.month,
-                        picked.day,
-                        selectedStart.hour,
-                        selectedStart.minute,
-                      );
-                      // keep end >= start
-                      if (selectedEnd.isBefore(selectedStart)) {
-                        selectedEnd = DateTime(
-                          picked.year,
-                          picked.month,
-                          picked.day,
-                          selectedEnd.hour,
-                          selectedEnd.minute,
-                        );
-                      }
-                    } else {
-                      selectedEnd = DateTime(
-                        picked.year,
-                        picked.month,
-                        picked.day,
-                        selectedEnd.hour,
-                        selectedEnd.minute,
-                      );
-                    }
-                  });
-                }
-              }
+            final DateTime init = isStart
+                ? (selectedStart.isBefore(today0) ? today0 : selectedStart)
+                : (selectedEnd.isBefore(floor) ? floor : selectedEnd);
 
-              Future<void> pickTime({required bool isStart}) async {
-                final picked = await showTimePicker(
-                  context: context,
-                  initialTime: TimeOfDay.fromDateTime(
-                    isStart ? selectedStart : selectedEnd,
-                  ),
-                );
-                if (picked != null) {
-                  setModalState(() {
-                    if (isStart) {
-                      selectedStart = DateTime(
-                        selectedStart.year,
-                        selectedStart.month,
-                        selectedStart.day,
-                        picked.hour,
-                        picked.minute,
-                      );
-                    } else {
-                      selectedEnd = DateTime(
-                        selectedEnd.year,
-                        selectedEnd.month,
-                        selectedEnd.day,
-                        picked.hour,
-                        picked.minute,
-                      );
-                    }
-                  });
-                }
-              }
-
-              Future<void> onSave() async {
-                if (!canEdit) return;
-
-                final title = titleController.text.trim();
-                final description = descriptionController.text.trim();
-
-                if (title.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Please enter a title.')),
+            final picked = await showDatePicker(
+              context: context,
+              initialDate: init,
+              firstDate: disallowPastDates ? floor : DateTime(2000),
+              lastDate: DateTime(2100),
+              selectableDayPredicate: (d) {
+                if (!disallowPastDates) return true;
+                final d0 = DateTime(d.year, d.month, d.day);
+                return !d0.isBefore(floor);
+              },
+            );
+            if (picked != null) {
+              setModalState(() {
+                if (isStart) {
+                  selectedStart = DateTime(
+                    picked.year,
+                    picked.month,
+                    picked.day,
+                    selectedStart.hour,
+                    selectedStart.minute,
                   );
-                  return;
-                }
-
-                final startDay0 = DateTime(
-                  selectedStart.year,
-                  selectedStart.month,
-                  selectedStart.day,
-                );
-                final endDay0 = DateTime(
-                  selectedEnd.year,
-                  selectedEnd.month,
-                  selectedEnd.day,
-                );
-
-                if (disallowPastDates &&
-                    (startDay0.isBefore(today0) || endDay0.isBefore(today0))) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text("Events can’t be created on past dates."),
-                    ),
-                  );
-                  return;
-                }
-
-                if (!selectedEnd.isAfter(selectedStart)) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('End time must be after start time.'),
-                    ),
-                  );
-                  return;
-                }
-
-                final col = await getEventsCollection();
-                final payload = <String, dynamic>{
-                  'title': title,
-                  'description': description,
-                  'startTime': Timestamp.fromDate(selectedStart),
-                  'endTime': Timestamp.fromDate(selectedEnd),
-                  'lastUpdated': FieldValue.serverTimestamp(),
-                };
-
-                if (existingEvent == null) {
-                  // ADD: set creator only on new shared events
-                  if (creatorId != null) payload['creatorId'] = creatorId;
-                  if (creatorName != null) payload['creatorName'] = creatorName;
-                  payload['createdAt'] = FieldValue.serverTimestamp();
-                  await col.add(payload);
+                  // keep end >= start
+                  if (selectedEnd.isBefore(selectedStart)) {
+                    selectedEnd = DateTime(
+                      picked.year,
+                      picked.month,
+                      picked.day,
+                      selectedEnd.hour,
+                      selectedEnd.minute,
+                    );
+                  }
                 } else {
-                  // EDIT: optional audit fields
-                  if (updatedById != null) payload['updatedById'] = updatedById;
-                  if ((updatedByName ?? '').isNotEmpty)
-                    payload['updatedByName'] = updatedByName!.trim();
-
-                  await col.doc(existingEvent['id'] as String).update(payload);
+                  selectedEnd = DateTime(
+                    picked.year,
+                    picked.month,
+                    picked.day,
+                    selectedEnd.hour,
+                    selectedEnd.minute,
+                  );
                 }
+              });
+            }
+          }
 
-                if (onAfterWrite != null) await onAfterWrite();
-                if (context.mounted) Navigator.pop(context);
-              }
+          Future<void> pickTime({required bool isStart}) async {
+            final picked = await showTimePicker(
+              context: context,
+              initialTime: TimeOfDay.fromDateTime(
+                isStart ? selectedStart : selectedEnd,
+              ),
+            );
+            if (picked != null) {
+              setModalState(() {
+                if (isStart) {
+                  selectedStart = DateTime(
+                    selectedStart.year,
+                    selectedStart.month,
+                    selectedStart.day,
+                    picked.hour,
+                    picked.minute,
+                  );
+                } else {
+                  selectedEnd = DateTime(
+                    selectedEnd.year,
+                    selectedEnd.month,
+                    selectedEnd.day,
+                    picked.hour,
+                    picked.minute,
+                  );
+                }
+              });
+            }
+          }
 
-              return AlertDialog(
-                backgroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
-                title: Text(
-                  existingEvent == null ? 'Add Event' : 'Edit Event',
-                  style: TextStyle(
-                    color: _text,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 20,
-                  ),
-                ),
-                content: SizedBox(
-                  width:
-                      MediaQuery.of(context).size.width > 500
-                          ? 400
-                          : double.maxFinite,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        TextField(
-                          controller: titleController,
-                          decoration: InputDecoration(
-                            labelText: 'Title',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            filled: true,
-                            fillColor: const Color(0xFFF1F5F9),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: descriptionController,
-                          minLines: 3,
-                          maxLines: 5,
-                          decoration: InputDecoration(
-                            labelText: 'Description',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            filled: true,
-                            fillColor: const Color(0xFFF1F5F9),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
+          Future<void> onSave() async {
+            if (!canEdit) return;
 
-                        Text(
-                          "Start:",
-                          style: TextStyle(
-                            color: _text,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            DateFormat('dd-MM-yyyy').format(selectedStart),
-                            style: TextStyle(color: _text),
-                          ),
-                          trailing: Icon(Icons.calendar_today, color: _button),
-                          onTap: () => pickDate(isStart: true),
-                        ),
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            DateFormat('hh:mm a').format(selectedStart),
-                            style: TextStyle(color: _text),
-                          ),
-                          trailing: Icon(Icons.access_time, color: _button),
-                          onTap: () => pickTime(isStart: true),
-                        ),
-                        const SizedBox(height: 12),
+            final title = titleController.text.trim();
+            final description = descriptionController.text.trim();
 
-                        Text(
-                          "End:",
-                          style: TextStyle(
-                            color: _text,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            DateFormat('dd-MM-yyyy').format(selectedEnd),
-                            style: TextStyle(color: _text),
-                          ),
-                          trailing: Icon(Icons.calendar_today, color: _button),
-                          onTap: () => pickDate(isStart: false),
-                        ),
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            DateFormat('hh:mm a').format(selectedEnd),
-                            style: TextStyle(color: _text),
-                          ),
-                          trailing: Icon(Icons.access_time, color: _button),
-                          onTap: () => pickTime(isStart: false),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton(
-                    onPressed: canEdit ? onSave : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _button,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: Text(existingEvent == null ? 'Add' : 'Save'),
-                  ),
-                ],
+            if (title.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Please enter a title.')),
               );
-            },
-          ),
+              return;
+            }
+
+            final startDay0 = DateTime(
+              selectedStart.year,
+              selectedStart.month,
+              selectedStart.day,
+            );
+            final endDay0 = DateTime(
+              selectedEnd.year,
+              selectedEnd.month,
+              selectedEnd.day,
+            );
+
+            if (disallowPastDates &&
+                (startDay0.isBefore(today0) || endDay0.isBefore(today0))) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Events can’t be created on past dates."),
+                ),
+              );
+              return;
+            }
+
+            if (!selectedEnd.isAfter(selectedStart)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('End time must be after start time.'),
+                ),
+              );
+              return;
+            }
+
+            final col = await getEventsCollection();
+            final payload = <String, dynamic>{
+              'title': title,
+              'description': description,
+              'startTime': Timestamp.fromDate(selectedStart),
+              'endTime': Timestamp.fromDate(selectedEnd),
+              'lastUpdated': FieldValue.serverTimestamp(),
+            };
+
+            if (existingEvent == null) {
+              // ADD: set creator only on new shared events
+              if (creatorId != null) payload['creatorId'] = creatorId;
+              if (creatorName != null) payload['creatorName'] = creatorName;
+              payload['createdAt'] = FieldValue.serverTimestamp();
+              await col.add(payload);
+            } else {
+              // EDIT: optional audit fields
+              if (updatedById != null) payload['updatedById'] = updatedById;
+              if ((updatedByName ?? '').isNotEmpty) {
+                payload['updatedByName'] = updatedByName!.trim();
+              }
+              await col.doc(existingEvent['id'] as String).update(payload);
+            }
+
+            if (onAfterWrite != null) await onAfterWrite();
+            if (context.mounted) Navigator.pop(context);
+          }
+
+          return AlertDialog(
+            backgroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+            title: Text(
+              existingEvent == null ? 'Add Event' : 'Edit Event',
+              style: TextStyle(
+                color: _text,
+                fontWeight: FontWeight.bold,
+                fontSize: 20,
+              ),
+            ),
+            content: SizedBox(
+              width: MediaQuery.of(context).size.width > 500 ? 400 : double.maxFinite,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextField(
+                      controller: titleController,
+                      decoration: InputDecoration(
+                        labelText: 'Title',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFFF1F5F9),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: descriptionController,
+                      minLines: 3,
+                      maxLines: 5,
+                      decoration: InputDecoration(
+                        labelText: 'Description',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFFF1F5F9),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    Text("Start:", style: TextStyle(color: _text, fontWeight: FontWeight.w600)),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(DateFormat('dd-MM-yyyy').format(selectedStart), style: TextStyle(color: _text)),
+                      trailing: Icon(Icons.calendar_today, color: _button),
+                      onTap: () => pickDate(isStart: true),
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(DateFormat('hh:mm a').format(selectedStart), style: TextStyle(color: _text)),
+                      trailing: Icon(Icons.access_time, color: _button),
+                      onTap: () => pickTime(isStart: true),
+                    ),
+                    const SizedBox(height: 12),
+
+                    Text("End:", style: TextStyle(color: _text, fontWeight: FontWeight.w600)),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(DateFormat('dd-MM-yyyy').format(selectedEnd), style: TextStyle(color: _text)),
+                      trailing: Icon(Icons.calendar_today, color: _button),
+                      onTap: () => pickDate(isStart: false),
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(DateFormat('hh:mm a').format(selectedEnd), style: TextStyle(color: _text)),
+                      trailing: Icon(Icons.access_time, color: _button),
+                      onTap: () => pickTime(isStart: false),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton(
+                onPressed: canEdit ? onSave : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _button,
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(existingEvent == null ? 'Add' : 'Save'),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -348,33 +315,102 @@ class EventCrud {
   static Future<void> confirmAndDelete({
     required BuildContext context,
     required Future<CollectionReference<Map<String, dynamic>>> Function()
-    getEventsCollection,
+        getEventsCollection,
     required String eventId,
     Future<void> Function()? onAfterDelete,
   }) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Delete Event'),
-            content: const Text('Are you sure you want to delete this event?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Delete'),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Event'),
+        content: const Text('Are you sure you want to delete this event?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
           ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
     );
 
     if (confirmed == true) {
       final col = await getEventsCollection();
       await col.doc(eventId).delete();
       if (onAfterDelete != null) await onAfterDelete();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // NEW: Simple chooser when tapping "Add Event"
+  // ---------------------------------------------------------------------------
+
+  /// Shows a tiny bottom sheet with two choices:
+  ///  - "Add manual entry" → opens the regular Add dialog
+  ///  - "Google sync calendar" → calls your provided `onGoogleSync`
+  ///
+  /// For shared calendars, pass `creatorId` / `creatorName` so manual entries
+  /// keep the proper creator metadata. Use `allowGoogleSync` to hide Google
+  /// option for non-owners.
+  static Future<void> showAddMenuWithGoogle({
+    required BuildContext context,
+    required Future<CollectionReference<Map<String, dynamic>>> Function()
+        getEventsCollection,
+    required bool canEdit,
+    required bool disallowPastDates,
+    required Future<void> Function() onGoogleSync,
+    DateTime? initialSelectedDay,
+    String? creatorId,
+    String? creatorName,
+    bool allowGoogleSync = true,
+    Future<void> Function()? onAfterWrite,
+    Color? buttonColor,
+    Color? textDark,
+  }) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: false,
+      showDragHandle: true,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_calendar),
+              title: const Text('Add manual entry'),
+              onTap: () => Navigator.of(context).pop('manual'),
+            ),
+            if (allowGoogleSync)
+              ListTile(
+                leading: const Icon(Icons.cloud_sync),
+                title: const Text('Google sync calendar'),
+                onTap: () => Navigator.of(context).pop('google'),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (choice == 'manual') {
+      await EventCrud.showAddOrEditDialog(
+        context: context,
+        getEventsCollection: getEventsCollection,
+        canEdit: canEdit,
+        disallowPastDates: disallowPastDates,
+        existingEvent: null,
+        creatorId: creatorId,
+        creatorName: creatorName,
+        initialSelectedDay: initialSelectedDay,
+        onAfterWrite: onAfterWrite,
+        buttonColor: buttonColor,
+        textDark: textDark,
+      );
+    } else if (choice == 'google') {
+      await onGoogleSync();
     }
   }
 }
