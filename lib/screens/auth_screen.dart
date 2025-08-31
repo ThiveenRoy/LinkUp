@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:linkup_calendar/utils/guest_helper.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -89,13 +90,19 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   }
 
   void _checkCurrentIdentity() async {
-    final user = FirebaseAuth.instance.currentUser;
     final prefs = await SharedPreferences.getInstance();
-    final guestId = prefs.getString('guestId');
-    final hasContinuedAsGuest = prefs.getBool('hasContinuedAsGuest') ?? false;
+      // ✅ If user tapped "End Guest Session", stay on the landing page once.
+    final forceLanding = prefs.getBool('forceLanding') ?? false;
+    if (forceLanding) {
+      await prefs.remove('forceLanding');      // consume the flag
+      setState(() => isLogin = false);         // show login/guest choices
+      return;                                  // ⬅️ stop auto-redirects
+    }
+    
+    final user = FirebaseAuth.instance.currentUser;
     bool seenTutorialLocal = prefs.getBool('seenTutorial') ?? false;
 
-    // If logged in, consult server flag and sync local cache.
+    // If logged in with a real account, consult server flag and sync local cache.
     bool seenTutorialServer = false;
     if (user != null && !user.isAnonymous) {
       seenTutorialServer = await _getServerSeenTutorialIfAny();
@@ -105,7 +112,14 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       }
     }
 
-    final isAuthed = (user != null) || (guestId != null && hasContinuedAsGuest);
+    // Authed = any Firebase user (anon or real). No more local guest-only check.
+    final isAuthed = (user != null);
+
+    // Keep a convenience flag for your routing if you like:
+    if (user != null && user.isAnonymous) {
+      await prefs.setBool('hasContinuedAsGuest', true);
+    }
+
     if (isAuthed) {
       setState(() => isLogin = true);
 
@@ -217,21 +231,25 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   }
 
   Future<void> _continueAsGuest() async {
-    final prefs = await SharedPreferences.getInstance();
-    final currentUser = FirebaseAuth.instance.currentUser;
-    if (currentUser != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("You're already signed in.")),
-      );
-      return;
+  setState(() { isLoading = true; error = null; });
+  final auth = FirebaseAuth.instance;
+
+  try {
+    final u = auth.currentUser;
+
+    if (u == null) {
+      // First time → create the anonymous session once
+      await auth.signInAnonymously();
+    } else if (!u.isAnonymous) {
+      // Currently on a real account → sign out, then start guest
+      await auth.signOut();
+      await auth.signInAnonymously();
+    } else {
+      // Already anonymous → reuse same UID (do nothing)
     }
 
-    String? guestId = prefs.getString('guestId');
-    if (guestId == null) {
-      guestId = const Uuid().v4();
-      await prefs.setString('guestId', guestId);
-    }
-    await prefs.setBool('hasContinuedAsGuest', true);
+    // Ensure name + routing flags are set (guestId/hasContinuedAsGuest in prefs)
+    await bootstrapAuth();
 
     // 🚨 Invite still takes precedence
     if (await _hasPendingInvite()) {
@@ -239,14 +257,24 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       return;
     }
 
+    final prefs = await SharedPreferences.getInstance();
     final seenTutorial = prefs.getBool('seenTutorial') ?? false;
+
+    if (!mounted) return;
     if (seenTutorial) {
       await _handlePostLoginRedirect();
     } else {
-      if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/onboarding');
     }
+  } on FirebaseAuthException catch (e) {
+    setState(() => error = e.message ?? 'Failed to continue as guest.');
+  } catch (_) {
+    setState(() => error = 'Unexpected error. Please try again.');
+  } finally {
+    if (mounted) setState(() => isLoading = false);
   }
+}
+
 
   Future<void> _signInWithGoogle() async {
     try {

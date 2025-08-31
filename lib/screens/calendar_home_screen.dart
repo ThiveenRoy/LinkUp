@@ -1,10 +1,14 @@
+// lib/screens/calendar_home_screen.dart
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'master_calendar_screen.dart';
 import 'shared_calendar_screen.dart';
 import 'shared_calendar_list.dart';
 
+// ✅ Use the centralized logout that preserves anon UID for guests
+import '../utils/guest_helper.dart';
 
 class CalendarHomeScreen extends StatefulWidget {
   final String? calendarId;
@@ -48,6 +52,17 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
       }
       setState(() {}); // keep bottom nav in sync on mobile
     });
+
+    _maybeShowTutorialOnce();
+  }
+
+  Future<void> _maybeShowTutorialOnce() async {
+    final prefs = await SharedPreferences.getInstance();
+    final seenTutorial = prefs.getBool('seenTutorial') ?? false;
+    // Optional: if you want to show a small hint card once even after onboarding
+    if (!seenTutorial) {
+      setState(() => _showTutorialCard = true);
+    }
   }
 
   @override
@@ -67,31 +82,10 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
     super.dispose();
   }
 
-  Future<void> _logout(BuildContext context) async {
-    final prefs = await SharedPreferences.getInstance();
-    final guestId = prefs.getString('guestId'); // backup guestId
-
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      await FirebaseAuth.instance.signOut();
-      try {
-        await FirebaseAuth.instance.setPersistence(Persistence.NONE);
-      } catch (_) {}
-    }
-
-    await prefs.remove('hasContinuedAsGuest');
-    if (guestId != null) {
-      await prefs.setString('guestId', guestId);
-    }
-
-    if (context.mounted) {
-      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 600;
+    final isGuest = FirebaseAuth.instance.currentUser?.isAnonymous == true;
 
     final desktopAppBar = AppBar(
       automaticallyImplyLeading: false,
@@ -108,7 +102,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
                 fontFamily: 'Poppins',
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
-                color: Theme.of(context).textTheme.titleLarge!.color,
+                color: Theme.of(context).textTheme.titleLarge?.color,
               ),
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
@@ -120,11 +114,11 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
         const SizedBox(width: 4),
         TextButton.icon(
           icon: const Icon(Icons.logout, color: Colors.redAccent),
-          label: const Text(
-            'Logout',
-            style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+          label: Text(
+            isGuest ? 'End Guest Session' : 'Logout',
+            style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
           ),
-          onPressed: () => _logout(context),
+          onPressed: () => appLogout(context),
         ),
       ],
       bottom: TabBar(
@@ -161,11 +155,14 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert),
               onSelected: (v) {
-                if (v == 'logout') _logout(context);
+                if (v == 'logout') appLogout(context);
               },
-              itemBuilder: (ctx) => const [
-                PopupMenuItem(value: 'settings', child: Text('Settings')),
-                PopupMenuItem(value: 'logout', child: Text('Logout')),
+              itemBuilder: (ctx) => [
+                const PopupMenuItem(value: 'settings', child: Text('Settings')),
+                PopupMenuItem(
+                  value: 'logout',
+                  child: Text(isGuest ? 'End Guest Session' : 'Logout'),
+                ),
               ],
             ),
           ],

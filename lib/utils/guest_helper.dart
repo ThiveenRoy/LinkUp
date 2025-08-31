@@ -1,5 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -7,20 +10,38 @@ import 'package:uuid/uuid.dart';
 /// - Sets LOCAL persistence on web
 /// - Ensures there's a Firebase session (anonymous if needed)
 /// - Ensures a friendly guest displayName (and caches it)
+
 Future<void> bootstrapAuth() async {
   final auth = FirebaseAuth.instance;
 
-  // LOCAL persistence helps keep the same uid across reloads on web
-  try {
-    await auth.setPersistence(Persistence.LOCAL);
-  } catch (_) {
-    // no-op on mobile; safe to ignore errors
+  // ✅ Web only: persist session so the anonymous UID survives reloads
+  if (kIsWeb) {
+    try {
+      await auth.setPersistence(Persistence.LOCAL);
+    } catch (_) {
+      // ignore
+    }
   }
 
+  // ✅ Reuse existing session; otherwise create one anon
   if (auth.currentUser == null) {
-    await ensureAuthSession(); // will anon sign-in + set name
+    await ensureAuthSession();                // your existing function
   } else {
-    await _ensureGuestName(auth.currentUser); // maintain readable name
+    await _ensureGuestName(auth.currentUser); // idempotent name
+  }
+
+  // ✅ Help your _computeInitialRoute() logic
+  await _persistGuestRoutingFlags();
+}
+
+Future<void> _persistGuestRoutingFlags() async {
+  final prefs = await SharedPreferences.getInstance();
+  final u = FirebaseAuth.instance.currentUser;
+  if (u != null) {
+    await prefs.setString('guestId', u.uid);
+    if (u.isAnonymous && !(prefs.getBool('hasContinuedAsGuest') ?? false)) {
+      await prefs.setBool('hasContinuedAsGuest', true);
+    }
   }
 }
 
@@ -138,13 +159,13 @@ Future<void> ensureCalendarMembership(String calendarId, {String? name}) async {
   final display = name ?? (await getCurrentUserName()) ?? 'Guest';
 
   final ref = FirebaseFirestore.instance.collection('calendars').doc(calendarId);
-  await ref.update({
-    'members': FieldValue.arrayUnion([
-      {'id': uid, 'name': display}
-    ]),
+  await ref.set({
+    'members': FieldValue.arrayUnion([{'id': uid, 'name': display}]),
     'memberIds': FieldValue.arrayUnion([uid]),
-  });
+    'updatedAt': FieldValue.serverTimestamp(),
+  }, SetOptions(merge: true));
 }
+
 
 /// Remove the current user from the calendar's members (both arrays).
 Future<void> removeCalendarMembership(String calendarId, {String? name}) async {
@@ -152,10 +173,59 @@ Future<void> removeCalendarMembership(String calendarId, {String? name}) async {
   final display = name ?? (await getCurrentUserName()) ?? 'Guest';
 
   final ref = FirebaseFirestore.instance.collection('calendars').doc(calendarId);
-  await ref.update({
-    'members': FieldValue.arrayRemove([
-      {'id': uid, 'name': display}
-    ]),
+  await ref.set({
+    'members': FieldValue.arrayRemove([{'id': uid, 'name': display}]),
     'memberIds': FieldValue.arrayRemove([uid]),
-  });
+    'updatedAt': FieldValue.serverTimestamp(),
+  }, SetOptions(merge: true));
 }
+
+/// Clear ONLY ephemeral UI/local state for guests.
+/// IMPORTANT: do NOT delete 'guestId' or 'guestName' – those keep the UID/name stable.
+Future<void> clearGuestUiStateOnly() async {
+  final prefs = await SharedPreferences.getInstance();
+
+  // 👉 Clear transient flags / selections your app uses.
+  // (Keep guestId / guestName so anon identity persists.)
+  await prefs.remove('pendingInviteId');
+  await prefs.remove('pendingSharedCalendarId');
+
+  // If you cache selected calendar, filters, tab index, etc. clear them here:
+  await prefs.remove('selectedCalendarId');
+  await prefs.remove('selectedTabIndex');
+
+  // Keep onboarding status unless you want to re-show it:
+  // await prefs.remove('seenTutorial'); // (leave commented out)
+}
+
+/// App-wide logout:
+/// - If user is anonymous: DO NOT sign out. Just clear UI state & go to landing.
+/// - If user is real (Google/email): sign out, then go to landing.
+Future<void> appLogout(BuildContext context) async {
+  final auth = FirebaseAuth.instance;
+  final u = auth.currentUser;
+
+  if (u != null && u.isAnonymous) {
+    // keep anon UID alive; do NOT signOut
+    await clearGuestUiStateOnly();
+
+    // ⬇️ tell AuthLandingScreen not to auto-redirect this time
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('forceLanding', true);
+
+    if (context.mounted) {
+      Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
+    }
+    return;
+  }
+
+  try { await GoogleSignIn().signOut(); } catch (_) {}
+  try { await auth.signOut(); } catch (_) {}
+
+  await clearGuestUiStateOnly();
+
+  if (context.mounted) {
+    Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
+  }
+}
+
