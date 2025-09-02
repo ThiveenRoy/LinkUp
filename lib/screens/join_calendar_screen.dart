@@ -1,9 +1,8 @@
+// lib/screens/join_calendar_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-// ⬇️ Make sure this import matches your project structure
-import '../utils/guest_helper.dart'; // or: package:shared_calendar/utils/guest_helper.dart
 
 class JoinCalendarScreen extends StatefulWidget {
   final String sharedLinkId;
@@ -29,79 +28,113 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
   }
 
   Future<void> _bootstrap() async {
-    // ✅ Make sure we have an auth session (anonymous or signed-in)
-    await ensureAuthSession();
+    final user = FirebaseAuth.instance.currentUser;
+
+    // Not signed in: stash invite & send to Auth
+    if (user == null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('pendingInviteId', widget.sharedLinkId);
+      // (calendarId will be filled after auth when we re-enter)
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/');
+      return;
+    }
+
     await fetchCalendarInfo();
+    await _clearPendingInvite();
   }
 
   Future<void> fetchCalendarInfo() async {
+    final user = FirebaseAuth.instance.currentUser!;
     final prefs = await SharedPreferences.getInstance();
-    final currentId = await getCurrentUserId(); // guaranteed non-null
 
-    // Find the calendar by shared link id
-    final query =
-        await FirebaseFirestore.instance.collection('calendars').get();
+    // Look up the calendar by link (try edit first, then view)
+    final col = FirebaseFirestore.instance.collection('calendars');
+    QueryDocumentSnapshot<Map<String, dynamic>>? doc;
 
-    for (final doc in query.docs) {
-      final data = doc.data();
-      if (data['sharedLinkEdit'] == widget.sharedLinkId ||
-          data['sharedLinkView'] == widget.sharedLinkId) {
-        calendarName = (data['name'] ?? '').toString();
-        calendarId = doc.id;
-
-        // ---------- Owner name resolution (robust) ----------
-        // Accept both 'owner' and 'ownerId'
-        final ownerId = (data['owner'] ?? data['ownerId'])?.toString();
-
-        // Try 1: explicit ownerName saved on the calendar (if you set it at creation)
-        String? resolvedOwnerName = (data['ownerName'] as String?)?.trim();
-
-        // Members can be strings or maps in your data model; handle both safely
-        final rawMembers = (data['members'] ?? []) as List<dynamic>;
-
-        // Try 2: find the owner inside members[] and use their stored 'name' (covers guest owners)
-        if ((resolvedOwnerName == null || resolvedOwnerName.isEmpty) &&
-            ownerId != null &&
-            ownerId.isNotEmpty) {
-          try {
-            final ownerMember = rawMembers
-                .map<Map<String, dynamic>?>(
-                    (m) => (m is Map<String, dynamic>) ? m : null)
-                .firstWhere(
-                    (m) => (m?['id']?.toString() ?? '') == ownerId,
-                    orElse: () => null);
-            if (ownerMember != null) {
-              resolvedOwnerName = (ownerMember['name'] as String?)?.trim();
-            }
-          } catch (_) {}
-        }
-
-        // Try 3: look up users/{ownerId} (covers email/Google owners)
-        if ((resolvedOwnerName == null || resolvedOwnerName.isEmpty) &&
-            ownerId != null &&
-            ownerId.isNotEmpty) {
-          try {
-            final ownerDoc = await FirebaseFirestore.instance
-                .collection('users')
-                .doc(ownerId)
+    try {
+      final q1 =
+          await col
+              .where('sharedLinkEdit', isEqualTo: widget.sharedLinkId)
+              .limit(1)
+              .get();
+      if (q1.docs.isNotEmpty) {
+        doc = q1.docs.first;
+      } else {
+        final q2 =
+            await col
+                .where('sharedLinkView', isEqualTo: widget.sharedLinkId)
+                .limit(1)
                 .get();
-            if (ownerDoc.exists) {
-              resolvedOwnerName =
-                  (ownerDoc.data()?['displayName'] as String?)?.trim();
-              resolvedOwnerName ??=
-                  (ownerDoc.data()?['email'] as String?)?.trim();
-            }
-          } catch (_) {}
+        if (q2.docs.isNotEmpty) doc = q2.docs.first;
+      }
+    } catch (_) {
+      // ignore and fall through to "not found"
+    }
+
+    if (doc == null) {
+      if (mounted) {
+        setState(() {
+          calendarName = null;
+          isLoading = false;
+        });
+      }
+      return;
+    }
+
+    final data = doc.data();
+    final isEdit = (data['sharedLinkEdit'] == widget.sharedLinkId);
+    final rawMembers = (data['members'] ?? []) as List<dynamic>;
+
+    calendarId = doc.id;
+    calendarName = (data['name'] ?? '').toString();
+
+    // ---------- Owner name resolution ----------
+    final ownerId = (data['owner'] ?? data['ownerId'])?.toString();
+    String? resolvedOwnerName = (data['ownerName'] as String?)?.trim();
+
+    if ((resolvedOwnerName == null || resolvedOwnerName.isEmpty) &&
+        ownerId != null &&
+        ownerId.isNotEmpty) {
+      try {
+        final ownerMember = rawMembers
+            .map<Map<String, dynamic>?>(
+              (m) => (m is Map<String, dynamic>) ? m : null,
+            )
+            .firstWhere(
+              (m) => (m?['id']?.toString() ?? '') == ownerId,
+              orElse: () => null,
+            );
+        if (ownerMember != null) {
+          resolvedOwnerName = (ownerMember['name'] as String?)?.trim();
         }
+      } catch (_) {}
 
-        // Final fallback
-        ownerName = (resolvedOwnerName == null || resolvedOwnerName.isEmpty)
-            ? 'Anonymous'
+      if (resolvedOwnerName == null || resolvedOwnerName.isEmpty) {
+        try {
+          final ownerDoc =
+              await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(ownerId)
+                  .get();
+          if (ownerDoc.exists) {
+            resolvedOwnerName =
+                (ownerDoc.data()?['displayName'] as String?)?.trim() ??
+                (ownerDoc.data()?['email'] as String?)?.trim();
+          }
+        } catch (_) {}
+      }
+    }
+
+    ownerName =
+        (resolvedOwnerName == null || resolvedOwnerName.isEmpty)
+            ? 'User'
             : resolvedOwnerName;
-        // ---------- /owner name resolution ----------
+    // ---------- /owner name resolution ----------
 
-        // Normalize member IDs to check if current user is already joined
-        final normalized = rawMembers
+    // Membership check (supports members: [string] or [{id,name}])
+    final normalized =
+        rawMembers
             .map<String>((m) {
               if (m is String) return m;
               if (m is Map && m['id'] != null) return m['id'].toString();
@@ -110,93 +143,69 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
             .where((e) => e.isNotEmpty)
             .toList();
 
-        isAlreadyJoined = normalized.contains(currentId);
-        memberCount = rawMembers.length;
+    isAlreadyJoined = normalized.contains(user.uid);
+    memberCount = rawMembers.length;
 
-        // Save whether this link grants edit access
-        final canEditViaLink = (data['sharedLinkEdit'] == widget.sharedLinkId);
-        if (calendarId != null) {
-          await prefs.setBool('editAccess_$calendarId', canEditViaLink);
-        }
+    // Cache whether this link grants edit access
+    await prefs.setBool('editAccess_${calendarId!}', isEdit);
 
-        setState(() => isLoading = false);
-        return;
-      }
-    }
-
-    setState(() {
-      calendarName = null;
-      isLoading = false;
-    });
+    if (mounted) setState(() => isLoading = false);
   }
 
-  /// 🚪 First-time aware "Join as Guest":
-  /// If tutorial not seen, stash invite and go to onboarding.
-  /// Otherwise, proceed to actually join.
-  Future<void> _joinAsGuestFirstTimeAware() async {
+  Future<void> _clearPendingInvite() async {
     final prefs = await SharedPreferences.getInstance();
-
-    // Ensure guest session flags are present (guest_helper creates/ensures ID)
-    await ensureAuthSession();
-    await prefs.setBool('hasContinuedAsGuest', true);
-
-    final seenTutorial = prefs.getBool('seenTutorial') ?? false;
-    if (!seenTutorial) {
-      // Stash the *invite link id* so AuthLandingScreen sends us back here
-      await prefs.setString('pendingInviteId', widget.sharedLinkId);
-      // Legacy key support (some older code may check this):
-      if (calendarId != null) {
-        await prefs.setString('pendingSharedCalendarId', calendarId!);
-      }
-
-      if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed('/onboarding');
-      return; // IMPORTANT: stop here
-    }
-
-    // Already onboarded → actually join the calendar
-    await _joinCalendarInternal();
+    await prefs.remove('pendingInviteId');
+    await prefs.remove('pendingSharedCalendarId');
   }
 
-  /// 👥 Join as a member (used for logged-in users OR after onboarding guest)
+  /// Join as a member (auth-only)
   Future<void> _joinCalendarInternal() async {
-    // Ensure (again) we have an auth/guest session in case user waited long or reloaded
-    await ensureAuthSession();
-
     final user = FirebaseAuth.instance.currentUser;
-    final currentId = await getCurrentUserId(); // non-null
-    final displayName = (await getCurrentUserName()) ?? 'Anonymous';
-
+    if (user == null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('pendingInviteId', widget.sharedLinkId);
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/');
+      return;
+    }
     if (calendarId == null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text("Missing calendar ID.")));
+      ).showSnackBar(const SnackBar(content: Text('Missing calendar ID.')));
       return;
     }
 
-    try {
-      final calendarRef =
-          FirebaseFirestore.instance.collection('calendars').doc(calendarId);
+    final uid = user.uid;
+    final displayName =
+        (user.displayName?.trim().isNotEmpty == true)
+            ? user.displayName!.trim()
+            : (user.email?.trim().isNotEmpty == true
+                ? user.email!.trim()
+                : 'User');
 
-      // Use arrayUnion on a small member object (id+name).
-      await calendarRef.update({
-        'members': FieldValue.arrayUnion([
-          {'id': currentId, 'name': displayName},
-        ]),
+    final ref = FirebaseFirestore.instance
+        .collection('calendars')
+        .doc(calendarId);
+
+    try {
+      // Only update membership + bookkeeping fields (what rules allow)
+      await FirebaseFirestore.instance.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        if (!snap.exists) throw Exception('Calendar not found');
+
+        tx.update(ref, {
+          'members': FieldValue.arrayUnion([
+            {'id': uid, 'name': displayName},
+          ]),
+          'memberIds': FieldValue.arrayUnion([uid]),
+          'lastUpdatedAt': FieldValue.serverTimestamp(),
+          'updatedBy': uid,
+          'updatedByName': displayName,
+        });
       });
 
-      // Optional: record guest’s joined calendars for your UX
-      if (user == null || (user.isAnonymous)) {
-        final guestId = currentId; // our helper returns uid or local id
-        await FirebaseFirestore.instance
-            .collection('guests')
-            .doc(guestId)
-            .collection('sharedCalendars')
-            .doc(calendarId)
-            .set({'calendarName': calendarName, 'joinedAt': Timestamp.now()});
-      }
-
       if (!mounted) return;
+      await _clearPendingInvite();
       Navigator.pushReplacementNamed(
         context,
         '/calendarHome',
@@ -208,38 +217,11 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
         },
       );
     } catch (e) {
-      // If members doesn't exist yet, create it
-      if (e.toString().contains('NOT_FOUND')) {
-        try {
-          await FirebaseFirestore.instance
-              .collection('calendars')
-              .doc(calendarId)
-              .set({
-                'members': [
-                  {'id': currentId, 'name': displayName},
-                ],
-              }, SetOptions(merge: true));
-
-          if (!mounted) return;
-          Navigator.pushReplacementNamed(
-            context,
-            '/calendarHome',
-            arguments: {
-              'calendarId': calendarId,
-              'calendarName': calendarName,
-              'tabIndex': 1,
-              'fromInvite': true,
-            },
-          );
-          return;
-        } catch (_) {}
-      }
-
-      debugPrint("❌ Failed to join: $e");
+      debugPrint('❌ Failed to join: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text("Error joining calendar: $e")));
+      ).showSnackBar(SnackBar(content: Text('Error joining calendar: $e')));
     }
   }
 
@@ -256,241 +238,186 @@ class _JoinCalendarScreenState extends State<JoinCalendarScreen> {
         centerTitle: true,
         foregroundColor: Colors.black,
       ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : calendarName == null
+      body:
+          isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : calendarName == null
               ? const Center(
-                  child: Text(
-                    "Invalid calendar link.",
-                    style: TextStyle(fontSize: 16, color: Colors.redAccent),
-                  ),
-                )
+                child: Text(
+                  "Invalid calendar link.",
+                  style: TextStyle(fontSize: 16, color: Colors.redAccent),
+                ),
+              )
               : Center(
-                  child: Container(
-                    constraints: const BoxConstraints(maxWidth: 500),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 32,
-                    ),
-                    margin: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black12,
-                          blurRadius: 12,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.calendar_month,
-                          size: 48,
-                          color: Color(0xFF3F72AF),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          isAlreadyJoined
-                              ? "You're already a member of"
-                              : "You've been invited to join",
-                          style:
-                              TextStyle(fontSize: 16, color: Colors.grey[700]),
-                        ),
-                        const SizedBox(height: 8),
-                        Column(
-                          children: [
-                            Text(
-                              '"$calendarName"',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF112D4E),
-                              ),
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 500),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 32,
+                  ),
+                  margin: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black12,
+                        blurRadius: 12,
+                        offset: Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.calendar_month,
+                        size: 48,
+                        color: Color(0xFF3F72AF),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        isAlreadyJoined
+                            ? "You're already a member of"
+                            : "You've been invited to join",
+                        style: TextStyle(fontSize: 16, color: Colors.grey[700]),
+                      ),
+                      const SizedBox(height: 8),
+                      Column(
+                        children: [
+                          Text(
+                            '"$calendarName"',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF112D4E),
                             ),
-                            if (ownerName != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  'Created by $ownerName',
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.black54,
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                              ),
+                          ),
+                          if (ownerName != null)
                             Padding(
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
-                                "$memberCount member${memberCount > 1 ? 's' : ''} in this calendar",
+                                'Created by $ownerName',
                                 style: const TextStyle(
                                   fontSize: 13,
                                   color: Colors.black54,
+                                  fontStyle: FontStyle.italic,
                                 ),
                               ),
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 24),
-                        FutureBuilder<String?>(
-                          future: getCurrentUserName(),
-                          builder: (_, snap) {
-                            final name = snap.data;
-                            return Text(
-                              (user != null && !(user.isAnonymous))
-                                  ? "Welcome back, ${name ?? user.email ?? 'User'}!"
-                                  : "You’re currently viewing as ${name ?? 'Guest'}",
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: Colors.grey[600]),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              "$memberCount member${memberCount > 1 ? 's' : ''} in this calendar",
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.black54,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Greeting / context
+                      Text(
+                        user != null
+                            ? "Welcome, ${(user.displayName ?? user.email ?? 'User')}!"
+                            : "Please sign in to join.",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 30),
+
+                      // === Buttons ===
+                      if (isAlreadyJoined) ...[
+                        ElevatedButton.icon(
+                          onPressed: () async{
+                            await _clearPendingInvite();
+                            Navigator.pushReplacementNamed(
+                              context,
+                              '/calendarHome',
+                              arguments: {
+                                'calendarId': calendarId,
+                                'calendarName': calendarName,
+                                'tabIndex': 1,
+                                'fromInvite': true,
+                              },
                             );
                           },
+                          icon: const Icon(Icons.open_in_new),
+                          label: const Text('Show Calendar'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF3F72AF),
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(48),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
                         ),
-                        const SizedBox(height: 30),
-
-                        // === Buttons ===
-                        if (isAlreadyJoined) ...[
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              Navigator.pushReplacementNamed(
+                      ] else ...[
+                        ElevatedButton.icon(
+                          onPressed:
+                              user == null ? null : _joinCalendarInternal,
+                          icon: const Icon(Icons.person_add_alt_1),
+                          label: const Text("Join Calendar"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF3F72AF),
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(48),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        if (user == null)
+                          OutlinedButton(
+                            onPressed: () async {
+                              // Stash invite so we return here after login
+                              final prefs =
+                                  await SharedPreferences.getInstance();
+                              await prefs.setString(
+                                'pendingInviteId',
+                                widget.sharedLinkId,
+                              );
+                              if (calendarId != null) {
+                                await prefs.setString(
+                                  'pendingSharedCalendarId',
+                                  calendarId!,
+                                );
+                              }
+                              if (!mounted) return;
+                              Navigator.pushNamedAndRemoveUntil(
                                 context,
-                                '/calendarHome',
-                                arguments: {
-                                  'calendarId': calendarId,
-                                  'calendarName': calendarName,
-                                  'tabIndex': 1,
-                                  'fromInvite': true,
-                                },
+                                '/',
+                                (_) => false,
                               );
                             },
-                            icon: const Icon(Icons.open_in_new),
-                            label: const Text('Show Calendar'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF3F72AF),
-                              foregroundColor: Colors.white,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF3F72AF),
+                              side: const BorderSide(color: Color(0xFF3F72AF)),
+                              backgroundColor: Colors.white,
                               minimumSize: const Size.fromHeight(48),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
-                          ),
-                        ] else ...[
-                          // Full-width button with inline info icon (Option 1)
-                          ElevatedButton(
-                            onPressed: (user != null && !(user.isAnonymous))
-                                ? _joinCalendarInternal // logged in → join immediately
-                                : _joinAsGuestFirstTimeAware, // guest → onboarding-aware
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF3F72AF),
-                              foregroundColor: Colors.white,
-                              minimumSize: const Size.fromHeight(48),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                            child: const Text(
+                              "Log in to join",
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF3F72AF),
                               ),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.person_add_alt_1),
-                                const SizedBox(width: 8),
-                                Text(
-                                  (user != null && !(user.isAnonymous))
-                                      ? "Join Calendar"
-                                      : "Join as Guest",
-                                ),
-                                const SizedBox(width: 8),
-                                GestureDetector(
-                                  onTap: () {
-                                    showDialog(
-                                      context: context,
-                                      builder: (ctx) => AlertDialog(
-                                        title: const Text(
-                                            "⚠️ About Guest Access"),
-                                        content: const Text(
-                                          "Guest access is stored only on this device/browser.\n\n"
-                                          "• If you clear your browser cache, switch devices, or use incognito mode, "
-                                          "you may lose access to your guest calendars.\n\n"
-                                          "• To keep calendars safe across devices, log in with Email or Google.",
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () =>
-                                                Navigator.pop(ctx),
-                                            child: const Text("Got it"),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  },
-                                  child: const Icon(
-                                    Icons.info_outline,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ),
-                              ],
                             ),
                           ),
-                          // ⬇️ NOTE: this comma after ElevatedButton is what fixes your "]" error
-                          if (user == null || user.isAnonymous) ...[
-                            const SizedBox(height: 12),
-                            OutlinedButton(
-                              onPressed: () async {
-                                final prefs =
-                                    await SharedPreferences.getInstance();
-
-                                // Stash invite so we return here after real login
-                                await prefs.setString(
-                                  'pendingInviteId',
-                                  widget.sharedLinkId,
-                                );
-                                if (calendarId != null) {
-                                  await prefs.setString(
-                                    'pendingSharedCalendarId',
-                                    calendarId!,
-                                  );
-                                }
-
-                                // 🔑 Clear guest session so Auth screen doesn't auto-redirect back to Join
-                                await prefs.remove('guestId');
-                                await prefs.setBool(
-                                    'hasContinuedAsGuest', false);
-
-                                if (!mounted) return;
-                                Navigator.pushNamedAndRemoveUntil(
-                                  context,
-                                  '/',
-                                  (_) => false,
-                                );
-                              },
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: const Color(0xFF3F72AF),
-                                side: const BorderSide(
-                                    color: Color(0xFF3F72AF)),
-                                backgroundColor: Colors.white,
-                                minimumSize: const Size.fromHeight(48),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              child: const Text(
-                                "Log in instead",
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF3F72AF),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
                       ],
-                    ),
+                    ],
                   ),
                 ),
+              ),
     );
   }
 }

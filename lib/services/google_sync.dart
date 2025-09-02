@@ -4,86 +4,104 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/calendar/v3.dart' as gcal;
 import 'package:http/http.dart' as http;
 
-import '../config/google_oauth.dart'; // kGoogleWebClientId
+import '../config/google_oauth.dart'; // define kGoogleWebClientId
 
-// ---------- Google API client ----------
+/* ──────────────────────────────────────────────────────────────────────────
+   Google auth & Calendar client (web + mobile)
+   - No gapi usage; we call Google APIs with Bearer http.Client
+   - listEvents returns gcal.Events (use .items / .nextSyncToken)
+   - hasSession() never prompts; ensureSignedInInteractive() can prompt
+   ────────────────────────────────────────────────────────────────────────── */
+
 class GoogleCalendarService {
   GoogleCalendarService._();
-  static final instance = GoogleCalendarService._();
+  static final GoogleCalendarService instance = GoogleCalendarService._();
 
-  static const _scopes = <String>[gcal.CalendarApi.calendarScope];
+  static const _scopes = <String>[
+    gcal.CalendarApi.calendarScope,
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.profile',
+  ];
+
   final GoogleSignIn _gsi = GoogleSignIn(
-    clientId: kGoogleWebClientId,
+    clientId: kGoogleWebClientId, // OK to be null on mobile
     scopes: _scopes,
   );
 
-  /// Quick check used by UI. NO silent sign-in here (prevents one-tap popup).
-    Future<bool> hasSession() async {
+  /// Quick status for UI. Never prompts.
+  Future<bool> hasSession() async {
     try {
-      // Purely local checks – no network, no popup.
       if (_gsi.currentUser != null) return true;
-
-      // isSignedIn() is cheap and does not prompt.
-      return await _gsi.isSignedIn();
+      final signed = await _gsi.isSignedIn();
+      if (!signed) return false;
+      try {
+        await _gsi.signInSilently(); // no popup
+      } catch (_) {}
+      return _gsi.currentUser != null;
     } catch (_) {
       return false;
     }
   }
 
-  /// Call this right before a user-initiated Google action.
-  /// It will prompt only if there's no session; otherwise it no-ops.
-    Future<void> ensureSignedInInteractive() async {
+  /// Call right before a user-initiated Google action (button tap).
+  Future<void> ensureSignedInInteractive() async {
     if (await hasSession()) return;
-    final acc = await _gsi.signIn(); // user-initiated → popup allowed
-    if (acc == null) throw Exception('Google sign-in cancelled.');
+    final acc = await _gsi.signIn(); // popup allowed (user initiated)
+    if (acc == null) throw Exception('NO_GOOGLE_SESSION');
   }
 
-  /// DO NOT trigger sign-in here. Only use the existing session.
+  Future<void> signOut() async {
+    try {
+      await _gsi.disconnect();
+    } catch (_) {}
+  }
+
+  /// Build an http.Client that injects OAuth headers.
+  /// Assumes a session exists—does NOT trigger sign-in.
   Future<http.Client> _authedClient() async {
     final acc = _gsi.currentUser;
     if (acc == null) throw Exception('NO_GOOGLE_SESSION');
-    final headers = await acc.authHeaders;
+    final headers = await acc.authHeaders; // includes Authorization: Bearer …
     return _AuthClient(headers);
   }
 
   Future<List<gcal.CalendarListEntry>> listCalendars() async {
-    final c = await _authedClient();
-    final api = gcal.CalendarApi(c);
-    final res = await api.calendarList.list();
-    return res.items ?? <gcal.CalendarListEntry>[];
+    final client = await _authedClient();
+    try {
+      final api = gcal.CalendarApi(client);
+      final res = await api.calendarList.list(
+        showHidden: true,
+        minAccessRole: 'reader',
+      );
+      return res.items ?? <gcal.CalendarListEntry>[];
+    } finally {
+      client.close();
+    }
   }
 
-  Future<({List<gcal.Event> events, String? nextSyncToken})> listEvents({
+  /// Returns the raw Events response (use .items and .nextSyncToken).
+  Future<gcal.Events> listEvents({
     required String calendarId,
     String? syncToken,
     DateTime? timeMin,
     DateTime? timeMax,
   }) async {
-    final c = await _authedClient();
-    final api = gcal.CalendarApi(c);
-    final result = await api.events.list(
-      calendarId,
-      syncToken: syncToken,
-      timeMin: syncToken == null ? timeMin?.toUtc() : null,
-      timeMax: syncToken == null ? timeMax?.toUtc() : null,
-      singleEvents: true,
-      showDeleted: true,
-      maxResults: 2500,
-    );
-    return (events: result.items ?? <gcal.Event>[], nextSyncToken: result.nextSyncToken);
-  }
-
-  Future<void> signOut() async {
-    try { await _gsi.disconnect(); } catch (_) {}
-  }
-
-  /// (Optional) Legacy helper kept for completeness.
-  Future<bool> isSignedIn() async {
+    final client = await _authedClient();
     try {
-      final current = _gsi.currentUser ?? await _gsi.signInSilently();
-      return current != null;
-    } catch (_) {
-      return false;
+      final api = gcal.CalendarApi(client);
+      final res = await api.events.list(
+        calendarId,
+        singleEvents: true,
+        orderBy: 'startTime',
+        showDeleted: true, // enables proper diffing with token
+        timeMin: syncToken == null ? timeMin?.toUtc() : null,
+        timeMax: syncToken == null ? timeMax?.toUtc() : null,
+        maxResults: 2500,
+        syncToken: syncToken,
+      );
+      return res;
+    } finally {
+      client.close();
     }
   }
 }
@@ -92,29 +110,34 @@ class _AuthClient extends http.BaseClient {
   final Map<String, String> _headers;
   final http.Client _inner = http.Client();
   _AuthClient(this._headers);
+
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
     request.headers.addAll(_headers);
     return _inner.send(request);
   }
+
   @override
   void close() => _inner.close();
 }
 
-// ---------- Firestore paths ----------
+/* ──────────────────────────────────────────────────────────────────────────
+   Firestore helpers (PER-USER integration doc)
+   Path key style used here: calendars/{calId}/integrations/google_{uid}
+   ────────────────────────────────────────────────────────────────────────── */
+
 DocumentReference<Map<String, dynamic>> calendarDoc(String calendarId) =>
     FirebaseFirestore.instance.collection('calendars').doc(calendarId);
 
 CollectionReference<Map<String, dynamic>> calendarEventsRef(String calendarId) =>
     calendarDoc(calendarId).collection('events');
 
-DocumentReference<Map<String, dynamic>> googleCfgRef(String calendarId) =>
-    calendarDoc(calendarId).collection('integrations').doc('google');
+DocumentReference<Map<String, dynamic>> googleCfgRef(String calendarId, String uid) =>
+    calendarDoc(calendarId).collection('integrations').doc('google_$uid');
 
-// ---------- Config model ----------
 class GoogleIntegrationConfig {
   final bool enabled;
-  final String? calendarId;        // Google calendar id
+  final String? calendarId;       // Google Calendar ID
   final String? calendarSummary;
   final String? syncToken;
   final DateTime? lastSyncAt;
@@ -154,29 +177,37 @@ class GoogleIntegrationConfig {
     String? calendarSummary,
     String? syncToken,
     DateTime? lastSyncAt,
-  }) =>
-      GoogleIntegrationConfig(
-        enabled: enabled ?? this.enabled,
-        calendarId: calendarId ?? this.calendarId,
-        calendarSummary: calendarSummary ?? this.calendarSummary,
-        syncToken: syncToken ?? this.syncToken,
-        lastSyncAt: lastSyncAt ?? this.lastSyncAt,
-      );
+  }) {
+    return GoogleIntegrationConfig(
+      enabled: enabled ?? this.enabled,
+      calendarId: calendarId ?? this.calendarId,
+      calendarSummary: calendarSummary ?? this.calendarSummary,
+      syncToken: syncToken ?? this.syncToken,
+      lastSyncAt: lastSyncAt ?? this.lastSyncAt,
+    );
+  }
 }
 
-Future<GoogleIntegrationConfig> loadGoogleCfgForCalendar(String calendarId) async {
-  final s = await googleCfgRef(calendarId).get();
+Future<GoogleIntegrationConfig> loadGoogleCfgForCalendar(
+  String calendarId,
+  String uid,
+) async {
+  final s = await googleCfgRef(calendarId, uid).get();
   return GoogleIntegrationConfig.fromMap(s.data());
 }
 
 Future<void> saveGoogleCfgForCalendar(
   String calendarId,
+  String uid,
   GoogleIntegrationConfig cfg,
 ) async {
-  await googleCfgRef(calendarId).set(cfg.toMap(), SetOptions(merge: true));
+  await googleCfgRef(calendarId, uid).set(cfg.toMap(), SetOptions(merge: true));
 }
 
-// ---------- Mapping: Google -> your event doc (startTime/endTime) ----------
+/* ──────────────────────────────────────────────────────────────────────────
+   Mapping helpers
+   ────────────────────────────────────────────────────────────────────────── */
+
 Map<String, dynamic>? googleEventToLocal(gcal.Event e) {
   if (e.status == 'cancelled') return null;
 
@@ -192,12 +223,12 @@ Map<String, dynamic>? googleEventToLocal(gcal.Event e) {
     end = e.end!.dateTime!.toLocal();
   } else if (e.start?.date != null && e.end?.date != null) {
     isAllDay = true;
-    // Google all-day uses exclusive end -> make it inclusive end-of-day
+    // Google all-day uses exclusive end; convert to inclusive 23:59:59
     final s = e.start!.date!;
     final t = e.end!.date!;
     start = DateTime(s.year, s.month, s.day, 0, 0, 0);
     final endExclusive = DateTime(t.year, t.month, t.day, 0, 0, 0);
-    end = endExclusive.subtract(const Duration(seconds: 1)); // 23:59:59 prev day
+    end = endExclusive.subtract(const Duration(seconds: 1));
   } else {
     return null;
   }
@@ -210,13 +241,13 @@ Map<String, dynamic>? googleEventToLocal(gcal.Event e) {
     'endTime': Timestamp.fromDate(end),
     'isAllDay': isAllDay,
     'googleEventId': e.id,
+    'iCalUID': e.iCalUID,
     'source': 'google',
     'createdAt': FieldValue.serverTimestamp(),
     'updatedAt': FieldValue.serverTimestamp(),
   };
 }
 
-// ---------- Import into calendars/{calendarId}/events ----------
 Future<int> importGoogleEventsToCalendar({
   required String calendarId, // target calendar (Master or Shared)
   required List<Map<String, dynamic>> events,
@@ -235,26 +266,27 @@ Future<int> importGoogleEventsToCalendar({
   final seen = <String>{};
   for (final d in existingSnap.docs) {
     final m = d.data();
-    final k =
-        '${m['title']}|${(m['startTime'] as Timestamp?)?.toDate()}|${(m['endTime'] as Timestamp?)?.toDate()}';
+    final k = '${m['title']}|${(m['startTime'] as Timestamp?)?.toDate()}|${(m['endTime'] as Timestamp?)?.toDate()}';
     seen.add(k);
   }
 
-  final batch = FirebaseFirestore.instance.batch();
   int count = 0;
+  WriteBatch batch = FirebaseFirestore.instance.batch();
   for (final ev in events) {
-    final k =
-        '${ev['title']}|${(ev['startTime'] as Timestamp).toDate()}|${(ev['endTime'] as Timestamp).toDate()}';
+    final k = '${ev['title']}|${(ev['startTime'] as Timestamp).toDate()}|${(ev['endTime'] as Timestamp).toDate()}';
     if (seen.contains(k)) continue;
+
     batch.set(ref.doc(), ev);
     count++;
-    if (count % 400 == 0) await batch.commit();
+    if (count % 400 == 0) {
+      await batch.commit();
+      batch = FirebaseFirestore.instance.batch();
+    }
   }
-  if (count % 400 != 0) await batch.commit();
+  await batch.commit();
   return count;
 }
 
-// ---------- Utility: find user's Master calendar id ----------
 Future<String?> findMasterCalendarIdForUser(String uid) async {
   final q = await FirebaseFirestore.instance
       .collection('calendars')
@@ -266,7 +298,6 @@ Future<String?> findMasterCalendarIdForUser(String uid) async {
   return q.docs.first.id;
 }
 
-// ---------- Delete all Google-imported events for a calendar ----------
 Future<int> deleteGoogleEventsFromCalendar(String calendarId) async {
   final ref = calendarEventsRef(calendarId);
   final snap = await ref.where('source', isEqualTo: 'google').limit(3000).get();
@@ -286,7 +317,6 @@ Future<int> deleteGoogleEventsFromCalendar(String calendarId) async {
   return count;
 }
 
-// ---------- Pretty range for previews ----------
 String humanDateRange(DateTime s, DateTime e) {
   String two(int n) => n.toString().padLeft(2, '0');
   final sd = '${two(s.day)}-${two(s.month)}-${s.year}';

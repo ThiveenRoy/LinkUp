@@ -99,6 +99,16 @@ class ThemeController extends ChangeNotifier {
     await prefs.setDouble('theme.wallpaper.dim', _wallpaperDim);
   }
 
+    bool get hasWallpaper {
+    if (kIsWeb) {
+      final b = _wallpaperBytes;
+      return b != null && b.isNotEmpty;
+    } else {
+      final p = _wallpaperPath;
+      return p != null && p.isNotEmpty;
+    }
+  }
+
   // ---------- Load persisted state ----------
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -134,4 +144,21 @@ class ThemeController extends ChangeNotifier {
 
     notifyListeners();
   }
+
+  // Add this method alongside your other setters
+  Future<void> clearWallpaper() async {
+    // Clear in-memory
+    if (kIsWeb) {
+      _wallpaperBytes = null;
+    } else {
+      _wallpaperPath = null;
+    }
+    notifyListeners();
+
+    // Clear persisted values
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('theme.wallpaper.bytes');
+    await prefs.remove('theme.wallpaper.path');
+  }
+  
 }

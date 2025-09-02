@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:linkup_calendar/theme/theme_controller.dart';
 import 'shared_calendar_screen.dart';
 import 'shared_calendar_list.dart';
 
@@ -6,11 +7,13 @@ class SharedCalendarTab extends StatefulWidget {
   final String? calendarId;
   final String? calendarName;
   final bool fromInvite;
+  final ThemeController theme;
 
   const SharedCalendarTab({
     this.calendarId,
     this.calendarName,
     this.fromInvite = false,
+    required this.theme,
   });
 
   @override
@@ -54,6 +57,6 @@ class _SharedCalendarTabState extends State<SharedCalendarTab> {
       );
     }
 
-    return SharedCalendarList(onSelect: _openCalendar);
+    return SharedCalendarList(onSelect: _openCalendar, theme: widget.theme,);
   }
 }

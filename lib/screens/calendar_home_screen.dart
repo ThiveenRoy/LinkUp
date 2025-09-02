@@ -1,14 +1,18 @@
 // lib/screens/calendar_home_screen.dart
+
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:linkup_calendar/utils/pick_wallpaper_web.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../theme/theme_controller.dart';
 import 'master_calendar_screen.dart';
-import 'shared_calendar_screen.dart';
+import 'settings_screen.dart';
 import 'shared_calendar_list.dart';
-
-// ✅ Use the centralized logout that preserves anon UID for guests
-import '../utils/guest_helper.dart';
+import 'shared_calendar_screen.dart';
 
 class CalendarHomeScreen extends StatefulWidget {
   final String? calendarId;
@@ -16,12 +20,16 @@ class CalendarHomeScreen extends StatefulWidget {
   final int tabIndex;
   final bool fromInvite;
 
+  /// Inject your ThemeController so Settings can read/update it.
+  final ThemeController theme;
+
   const CalendarHomeScreen({
     super.key,
     this.calendarId,
     required this.calendarName,
     this.tabIndex = 0,
     this.fromInvite = false,
+    required this.theme,
   });
 
   @override
@@ -44,13 +52,13 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
     );
 
     _tabController.addListener(() {
-      if (_tabController.indexIsChanging) return; // Prevent reset during swipe
+      if (_tabController.indexIsChanging) return;
       if (_tabController.index == 1 && !widget.fromInvite) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _sharedTabKey.currentState?.resetToListView();
         });
       }
-      setState(() {}); // keep bottom nav in sync on mobile
+      setState(() {}); // keep mobile bottom nav in sync
     });
 
     _maybeShowTutorialOnce();
@@ -59,7 +67,6 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
   Future<void> _maybeShowTutorialOnce() async {
     final prefs = await SharedPreferences.getInstance();
     final seenTutorial = prefs.getBool('seenTutorial') ?? false;
-    // Optional: if you want to show a small hint card once even after onboarding
     if (!seenTutorial) {
       setState(() => _showTutorialCard = true);
     }
@@ -82,10 +89,81 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
     super.dispose();
   }
 
+  Future<void> _logout(BuildContext context) async {
+    try {
+      await GoogleSignIn().signOut();
+    } catch (_) {}
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+  }
+
+  // ---------------- Settings ----------------
+
+  void _openSettings() {
+  final t = widget.theme;
+
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => SettingsScreen(
+        // values
+        themeMode: t.themeMode,
+        accentColor: t.seedColor,
+
+        // callbacks
+        onThemeModeChanged: (m) {
+          switch (m) {
+            case ThemeMode.light:  t.setMode(ThemeModePref.light);  break;
+            case ThemeMode.dark:   t.setMode(ThemeModePref.dark);   break;
+            case ThemeMode.system: t.setMode(ThemeModePref.system); break;
+          }
+        },
+        onAccentChanged: t.setSeedColor,
+
+        // about
+        appName: 'LinkUp Calendar',
+        appVersion: 'v1.0.2',
+        createdBy: 'Thiveen Roy',
+      ),
+    ),
+  );
+}
+
+  /// Picks an image and saves it to ThemeController:
+  /// - Web: stores bytes (SharedPreferences base64).
+  /// - Mobile/Desktop: stores absolute file path.
+  Future<void> _pickAndApplyWallpaper(ThemeController t) async {
+  try {
+    if (kIsWeb) {
+      // No plugin on web
+      final bytes = await pickWallpaperBytesWeb();
+      if (bytes == null) return;
+      await t.setWallpaperBytes(bytes);
+      return;
+    }
+
+    // Mobile / Desktop: file path via file_picker
+    final res = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+    if (res == null || res.files.single.path == null) return;
+    await t.setWallpaperPath(res.files.single.path);
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to load wallpaper: $e')),
+    );
+  }
+}
+
+  // ---------------- UI ----------------
+
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 600;
-    final isGuest = FirebaseAuth.instance.currentUser?.isAnonymous == true;
 
     final desktopAppBar = AppBar(
       automaticallyImplyLeading: false,
@@ -112,13 +190,19 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
       ),
       actions: [
         const SizedBox(width: 4),
+        IconButton(
+          tooltip: 'Settings',
+          icon: const Icon(Icons.settings),
+          onPressed: _openSettings,
+        ),
+        const SizedBox(width: 8),
         TextButton.icon(
           icon: const Icon(Icons.logout, color: Colors.redAccent),
-          label: Text(
-            isGuest ? 'End Guest Session' : 'Logout',
-            style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+          label: const Text(
+            'Logout',
+            style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
           ),
-          onPressed: () => appLogout(context),
+          onPressed: () => _logout(context),
         ),
       ],
       bottom: TabBar(
@@ -134,7 +218,6 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
       ),
     );
 
-    // Compact top header for mobile (logo + menu only)
     final mobileTopBar = SafeArea(
       bottom: false,
       child: Container(
@@ -149,20 +232,22 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
                 'LinkUp Calendar',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600, fontSize: 16),
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                ),
               ),
             ),
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert),
               onSelected: (v) {
-                if (v == 'logout') appLogout(context);
+                if (v == 'logout') _logout(context);
+                if (v == 'settings') _openSettings();
               },
-              itemBuilder: (ctx) => [
-                const PopupMenuItem(value: 'settings', child: Text('Settings')),
-                PopupMenuItem(
-                  value: 'logout',
-                  child: Text(isGuest ? 'End Guest Session' : 'Logout'),
-                ),
+              itemBuilder: (ctx) => const [
+                PopupMenuItem(value: 'settings', child: Text('Settings')),
+                PopupMenuItem(value: 'logout', child: Text('Logout')),
               ],
             ),
           ],
@@ -170,11 +255,11 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
       ),
     );
 
-    // Bottom tabs for mobile
     final mobileBottomNav = NavigationBar(
       selectedIndex: _tabController.index,
       destinations: const [
-        NavigationDestination(icon: Icon(Icons.calendar_today), label: 'Master Calendar'),
+        NavigationDestination(
+            icon: Icon(Icons.calendar_today), label: 'Master Calendar'),
         NavigationDestination(icon: Icon(Icons.group), label: 'Shared Calendar'),
       ],
       onDestinationSelected: (i) {
@@ -186,7 +271,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
     return WillPopScope(
       onWillPop: () async {
         if (widget.fromInvite) {
-          _tabController.animateTo(1); // Stay on Shared tab
+          _tabController.animateTo(1);
           return false;
         }
         return true;
@@ -197,7 +282,6 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
         body: Column(
           children: [
             if (isMobile) mobileTopBar,
-
             if (_showTutorialCard)
               Card(
                 margin: const EdgeInsets.all(16),
@@ -216,13 +300,13 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
                       ),
                       IconButton(
                         icon: const Icon(Icons.close),
-                        onPressed: () => setState(() => _showTutorialCard = false),
+                        onPressed: () =>
+                            setState(() => _showTutorialCard = false),
                       ),
                     ],
                   ),
                 ),
               ),
-
             Expanded(
               child: TabBarView(
                 controller: _tabController,
@@ -233,6 +317,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
                     calendarId: widget.calendarId,
                     calendarName: widget.calendarName,
                     fromInvite: widget.fromInvite,
+                    theme: widget.theme, // pass ThemeController to list
                   ),
                 ],
               ),
@@ -249,11 +334,15 @@ class SharedCalendarTab extends StatefulWidget {
   final String? calendarName;
   final bool fromInvite;
 
+  /// Pass ThemeController down to the shared list screen.
+  final ThemeController theme;
+
   const SharedCalendarTab({
     super.key,
     this.calendarId,
     this.calendarName,
     this.fromInvite = false,
+    required this.theme,
   });
 
   @override
@@ -305,6 +394,9 @@ class _SharedCalendarTabState extends State<SharedCalendarTab> {
         onBackToList: _goBackToList,
       );
     }
-    return SharedCalendarList(onSelect: _openCalendar);
+    return SharedCalendarList(
+      onSelect: _openCalendar,
+      theme: widget.theme,
+    );
   }
 }

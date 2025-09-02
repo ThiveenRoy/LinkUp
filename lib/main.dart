@@ -1,7 +1,9 @@
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart'; // web drag support
+// lib/main.dart
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:linkup_calendar/theme/theme_bg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -13,47 +15,45 @@ import 'screens/onboarding_screen.dart';
 import 'screens/join_calendar_screen.dart';
 import 'screens/shared_calendar_screen.dart';
 
-// ✅ Stable anonymous auth + guest name helpers
-import 'utils/guest_helper.dart';
+// THEME
+import 'theme/theme_controller.dart';
+import 'theme/app_theme.dart';
+
+// 👇 add this
+
 
 Future<String> _computeInitialRoute() async {
   final prefs = await SharedPreferences.getInstance();
   final firebaseUser = FirebaseAuth.instance.currentUser;
-  final guestId = prefs.getString('guestId');
-  final hasContinuedAsGuest = prefs.getBool('hasContinuedAsGuest') ?? false;
   final seenTutorial = prefs.getBool('seenTutorial') ?? false;
 
   // Respect actual browser URL (Flutter Web)
   final incomingRoute = WidgetsBinding.instance.platformDispatcher.defaultRouteName;
-
   if (incomingRoute.startsWith('/cal/')) {
     return incomingRoute; // deep link to invite
+  }
+
+  if (firebaseUser != null) {
+    return seenTutorial ? '/calendarHome' : '/onboarding';
   } else {
-    if (firebaseUser != null || (guestId != null && hasContinuedAsGuest)) {
-      return seenTutorial ? '/calendarHome' : '/onboarding';
-    } else {
-      return '/';
-    }
+    return '/';
   }
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-
-  // 🔐 Ensure persistent auth (anonymous if needed) + stable guest name
-  await bootstrapAuth();
-
-  // Decide initial route now that auth is ready
   final initialRoute = await _computeInitialRoute();
 
-  runApp(MyApp(initialRoute: initialRoute));
+  // Load theming
+  final theme = ThemeController();
+  await theme.load();
+
+  runApp(MyApp(initialRoute: initialRoute, theme: theme));
 }
 
-// ✅ Web scroll behavior
+// Web scroll behavior
 class WebScrollBehavior extends MaterialScrollBehavior {
   @override
   Set<PointerDeviceKind> get dragDevices => {
@@ -65,81 +65,82 @@ class WebScrollBehavior extends MaterialScrollBehavior {
 
 class MyApp extends StatelessWidget {
   final String initialRoute;
-  const MyApp({super.key, required this.initialRoute});
+  final ThemeController theme;
+
+  const MyApp({super.key, required this.initialRoute, required this.theme});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'LinkUp Calendar',
-      scrollBehavior: WebScrollBehavior(),
-      theme: ThemeData(
-        brightness: Brightness.light,
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF9F7F7),
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFF9F7F7),
-          elevation: 0.5,
-          iconTheme: IconThemeData(color: Colors.black87),
-          titleTextStyle: TextStyle(
-            color: Colors.black87,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
+    return AnimatedBuilder(
+      animation: theme, // rebuild on theme changes (color, mode, wallpaper)
+      builder: (context, _) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'LinkUp Calendar',
+          scrollBehavior: WebScrollBehavior(),
+
+          // Theme from your controller
+          themeMode: theme.themeMode,
+          theme: buildLightTheme(theme.seedColor),
+          darkTheme: buildDarkTheme(theme.seedColor),
+
+          // 👇 Mount the wallpaper once for the whole app
+          builder: (context, child) => ThemeBg(
+            controller: theme,
+            child: child ?? const SizedBox.shrink(),
           ),
-        ),
-      ),
 
-      initialRoute: initialRoute,
+          initialRoute: initialRoute,
 
-      onGenerateRoute: (settings) {
-        final uri = Uri.parse(settings.name ?? '');
+          onGenerateRoute: (settings) {
+            final uri = Uri.parse(settings.name ?? '');
 
-        // 🔗 /cal/<sharedLinkId> deep link entry
-        if (uri.pathSegments.length == 2 && uri.pathSegments[0] == 'cal') {
-          final sharedLinkId = uri.pathSegments[1];
-          return MaterialPageRoute(
-            builder: (_) => InviteGate(sharedLinkId: sharedLinkId),
-            settings: settings,
-          );
-        }
+            // /cal/<sharedLinkId> deep link
+            if (uri.pathSegments.length == 2 && uri.pathSegments[0] == 'cal') {
+              final sharedLinkId = uri.pathSegments[1];
+              return MaterialPageRoute(
+                builder: (_) => InviteGate(sharedLinkId: sharedLinkId),
+                settings: settings,
+              );
+            }
 
-        if (settings.name == '/calendarHome') {
-          final args = settings.arguments as Map<String, dynamic>?;
+            if (settings.name == '/calendarHome') {
+              final args = settings.arguments as Map<String, dynamic>?;
+              return MaterialPageRoute(
+                builder: (_) => CalendarHomeScreen(
+                  theme: theme, // pass controller so Settings can modify it
+                  calendarId: args?['calendarId'],
+                  calendarName: args?['calendarName'] ?? 'LinkUp Calendar',
+                  tabIndex: args?['tabIndex'] ?? 0,
+                ),
+                settings: settings,
+              );
+            }
 
-          return MaterialPageRoute(
-            builder: (_) => CalendarHomeScreen(
-              calendarId: args?['calendarId'],
-              calendarName: args?['calendarName'] ?? 'LinkUp Calendar',
-              tabIndex: args?['tabIndex'] ?? 0,
-            ),
-            settings: settings,
-          );
-        }
+            return null; // allow routes map to handle the rest
+          },
 
-        return null; // fall back to named routes map below
-      },
-
-      routes: {
-        '/': (context) => AuthLandingScreen(),
-        '/onboarding': (context) => const OnboardingScreen(),
-        '/masterCalendar': (context) => MasterCalendarScreen(),
-        '/sharedCalendar': (context) {
-          final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
-          return SharedCalendarScreen(
-            calendarId: args?['calendarId'],
-            calendarName: args?['calendarName'],
-            sharedLinkId: args?['sharedLinkId'],
-          );
-        },
+          routes: {
+            '/': (context) => AuthLandingScreen(),
+            '/onboarding': (context) => const OnboardingScreen(),
+            '/masterCalendar': (context) => const MasterCalendarScreen(),
+            '/sharedCalendar': (context) {
+              final args =
+                  ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
+              return SharedCalendarScreen(
+                calendarId: args?['calendarId'],
+                calendarName: args?['calendarName'],
+                sharedLinkId: args?['sharedLinkId'],
+              );
+            },
+          },
+        );
       },
     );
   }
 }
 
-/// A tiny gate that runs when opening /cal/<sharedLinkId>.
-/// It ensures the invite is stashed, then ALWAYS goes to JoinCalendarScreen
-/// (which handles both new and returning users).
+/// Gate for /cal/<sharedLinkId>
 class InviteGate extends StatefulWidget {
   final String sharedLinkId;
   const InviteGate({super.key, required this.sharedLinkId});
@@ -156,15 +157,19 @@ class _InviteGateState extends State<InviteGate> {
   }
 
   Future<void> _routeFromInvite() async {
-    // Make sure we have an auth session before any Firestore reads
-    await bootstrapAuth();
-
     final prefs = await SharedPreferences.getInstance();
 
-    // Stash invite + (optionally) cache calendarId/editAccess for convenience
     await prefs.setString('pendingInviteId', widget.sharedLinkId);
 
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/'); // go sign in
+      return;
+    }
+
     try {
+      // Optional prefetch: find the calendarId associated with this link
       final q = await FirebaseFirestore.instance.collection('calendars').get();
       for (final doc in q.docs) {
         final data = doc.data();
@@ -178,7 +183,7 @@ class _InviteGateState extends State<InviteGate> {
         }
       }
     } catch (_) {
-      // ignore; Join/Onboarding handles it later
+      // ignore; Join handles it later
     }
 
     if (!mounted) return;

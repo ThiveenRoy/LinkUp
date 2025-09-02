@@ -2,10 +2,12 @@
 //
 // Master calendar with:
 //  - Add Event button → opens manual dialog directly
-//  - Google button → opens a card-style AlertDialog with actions
+//  - Google button → opens a glass-card Dialog (same as Shared)
 //  - Quiet Google auth (no auto popup)
 //  - Full-refresh Google sync (diff add/delete) identical to Shared
-//  - Consistent toasts and UI polish
+//  - Theming: no hardcoded colors; uses ColorScheme/TextTheme
+//  - Transparent Scaffold so ThemeBg wallpaper can show
+//  - GlassPanel applied to calendar frame and event cards
 
 import 'dart:math';
 
@@ -13,13 +15,37 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:googleapis/calendar/v3.dart' as gcal;
 
-import '../utils/guest_helper.dart';
 import '../common/event_crud.dart';
 import '../services/google_sync.dart';
-import 'package:googleapis/calendar/v3.dart' as gcal;
+import '../widgets/glass.dart';
+
+enum _AgendaView { day, month }
+
+// ----- shared glass tuning (kept identical to Shared screen)
+class _GlassVars {
+  final double blur, opacity, accentOpacity, borderWidth, shadowOpacity;
+  const _GlassVars({
+    required this.blur,
+    required this.opacity,
+    required this.accentOpacity,
+    required this.borderWidth,
+    required this.shadowOpacity,
+  });
+}
+
+_GlassVars _glassVars(BuildContext c) {
+  final isDark = Theme.of(c).brightness == Brightness.dark;
+  return _GlassVars(
+    blur: isDark ? 22 : 36,
+    opacity: isDark ? 0.11 : 0.042,
+    accentOpacity: isDark ? 0.18 : 0.16,
+    borderWidth: 0.9,
+    shadowOpacity: isDark ? 0.25 : 0.10,
+  );
+}
 
 class MasterCalendarScreen extends StatefulWidget {
   const MasterCalendarScreen({super.key});
@@ -27,8 +53,6 @@ class MasterCalendarScreen extends StatefulWidget {
   @override
   State<MasterCalendarScreen> createState() => _MasterCalendarScreenState();
 }
-
-enum _AgendaView { day, month }
 
 class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   DateTime _focusedDay = DateTime.now();
@@ -40,15 +64,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   Map<String, Color> _eventColors = {};
   bool _loading = true;
 
-  // Theme
-  final Color bgColor = const Color(0xFFF9F7F7);
-  final Color lightCard = const Color(0xFFDBE2EF);
-  final Color buttonColor = const Color(0xFF3F72AF);
-  final Color textDark = const Color(0xFF112D4E);
-
   String? _masterCalendarId; // calendars/{id}
 
-  // ---------- Google state (mirrors Shared) ----------
+  // ---------- Google state ----------
   bool _googleSyncEnabled = false;
   String? _linkedCalendarSummary;
   bool _googleSignedIn = false;
@@ -56,31 +74,40 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   @override
   void initState() {
     super.initState();
-    ensureUserHasMasterCalendar().then((_) async {
-      await _initMasterId();
-      await _loadGoogleCfg(); // Firestore only; no auth popup
-      await _loadEvents();
-    });
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
+      return;
+    }
+    await _ensureUserHasMasterCalendar();
+    await _initMasterId();
+    await _loadGoogleCfg(); // Firestore only; no auth popup
+    await _loadEvents();
   }
 
   // ---------- helpers ----------
   void _toast(String msg, {IconData? icon, Color? color}) {
-    final c = color ?? buttonColor;
+    final cs = Theme.of(context).colorScheme;
+    final bg = color ?? cs.primary;
+    final on = cs.onPrimary;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.all(12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        backgroundColor: c,
+        backgroundColor: bg,
         content: Row(
           children: [
             if (icon != null) ...[
-              Icon(icon, color: Colors.white),
+              Icon(icon, color: on),
               const SizedBox(width: 12),
             ],
-            Expanded(
-              child: Text(msg, style: const TextStyle(color: Colors.white)),
-            ),
+            Expanded(child: Text(msg, style: TextStyle(color: on))),
           ],
         ),
       ),
@@ -91,6 +118,8 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     required String message,
     required Future<T> Function() task,
   }) async {
+    final tt = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -101,10 +130,15 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            children: const [
-              SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4)),
-              SizedBox(width: 12),
-              Flexible(child: Text('Working…', style: TextStyle(fontSize: 14))),
+            children: [
+              const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4)),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Text(
+                  message.isEmpty ? 'Working…' : message,
+                  style: tt.bodyMedium?.copyWith(color: cs.onSurface),
+                ),
+              ),
             ],
           ),
         ),
@@ -118,7 +152,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     }
   }
 
-  // Build the same unique key used by Shared for import dedupe/diff
   String _keyForLocal(Map<String, dynamic> m) {
     final ts1 = (m['startTime'] as Timestamp?)?.toDate();
     final ts2 = (m['endTime'] as Timestamp?)?.toDate();
@@ -129,19 +162,13 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   }
   String _keyForMapped(Map<String, dynamic> m) => _keyForLocal(m);
 
-  // Standard sync window: last 6 months → next 12 months
   ({DateTime from, DateTime to}) _syncWindow() {
     final now = DateTime.now();
-    final from = DateTime(now.year, now.month - 6, now.day);
-    final to   = DateTime(now.year + 1, now.month, now.day);
-    return (from: from, to: to);
+    return (from: DateTime(now.year, now.month - 6, now.day),
+            to:   DateTime(now.year + 1, now.month, now.day));
   }
 
-  String _formatEventTime(
-    DateTime? selectedDate,
-    DateTime? start,
-    DateTime? end,
-  ) {
+  String _formatEventTime(DateTime? selectedDate, DateTime? start, DateTime? end) {
     if (start == null || end == null || selectedDate == null) return '';
     final sd = DateFormat('d MMM yyyy').format(selectedDate);
     final st = DateFormat('h:mm a').format(start);
@@ -150,31 +177,47 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   }
 
   // ---------- master calendar bootstrap ----------
-  Future<void> ensureUserHasMasterCalendar() async {
-    final userId = await getCurrentUserId();
-    final query = await FirebaseFirestore.instance
+  Future<void> _ensureUserHasMasterCalendar() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final q = await FirebaseFirestore.instance
         .collection('calendars')
-        .where('owner', isEqualTo: userId)
+        .where('owner', isEqualTo: user.uid)
         .where('isShared', isEqualTo: false)
         .limit(1)
         .get();
 
-    if (query.docs.isEmpty) {
+    if (q.docs.isEmpty) {
+      final displayName =
+          (user.displayName?.trim().isNotEmpty == true)
+              ? user.displayName!.trim()
+              : (user.email?.trim().isNotEmpty == true ? user.email!.trim() : 'User');
+
       await FirebaseFirestore.instance.collection('calendars').add({
         'name': 'My Calendar',
-        'owner': userId,
-        'members': [userId],
+        'owner': user.uid,
+        'ownerName': displayName,
+        'ownerEmail': user.email,
+        'members': [
+          {'id': user.uid, 'name': displayName}
+        ],
+        'memberIds': [user.uid],
         'isShared': false,
-        'createdAt': Timestamp.now(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'lastUpdatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': user.uid,
+        'updatedByName': displayName,
       });
     }
   }
 
   Future<void> _initMasterId() async {
-    final userId = await getCurrentUserId();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
     final q = await FirebaseFirestore.instance
         .collection('calendars')
-        .where('owner', isEqualTo: userId)
+        .where('owner', isEqualTo: user.uid)
         .where('isShared', isEqualTo: false)
         .limit(1)
         .get();
@@ -198,32 +241,46 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     });
   }
 
-  /// Personal events collection (this user's master calendar)
   Future<CollectionReference<Map<String, dynamic>>> _personalEventsCol() async {
     final user = FirebaseAuth.instance.currentUser;
-    final prefs = await SharedPreferences.getInstance();
-    final currentUserId = user?.uid ?? prefs.getString('guestId');
+    if (user == null) throw StateError('Not authenticated');
 
     final q = await FirebaseFirestore.instance
         .collection('calendars')
-        .where('owner', isEqualTo: currentUserId)
+        .where('owner', isEqualTo: user.uid)
         .where('isShared', isEqualTo: false)
         .limit(1)
         .get();
 
-    final id = q.docs.isEmpty
-        ? (await FirebaseFirestore.instance.collection('calendars').add({
-            'name': 'My Calendar',
-            'owner': currentUserId,
-            'members': [currentUserId],
-            'isShared': false,
-            'createdAt': Timestamp.now(),
-          })).id
-        : q.docs.first.id;
+    String calId;
+    if (q.docs.isEmpty) {
+      final displayName =
+          (user.displayName?.trim().isNotEmpty == true)
+              ? user.displayName!.trim()
+              : (user.email?.trim().isNotEmpty == true ? user.email!.trim() : 'User');
+
+      calId = (await FirebaseFirestore.instance.collection('calendars').add({
+        'name': 'My Calendar',
+        'owner': user.uid,
+        'ownerName': displayName,
+        'ownerEmail': user.email,
+        'members': [
+          {'id': user.uid, 'name': displayName}
+        ],
+        'memberIds': [user.uid],
+        'isShared': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'lastUpdatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': user.uid,
+        'updatedByName': displayName,
+      })).id;
+    } else {
+      calId = q.docs.first.id;
+    }
 
     return FirebaseFirestore.instance
         .collection('calendars')
-        .doc(id)
+        .doc(calId)
         .collection('events');
   }
 
@@ -232,8 +289,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   /// - Shared calendars: include ONLY events I created manually (exclude 'google').
   Future<void> _loadEvents() async {
     final user = FirebaseAuth.instance.currentUser;
-    final prefs = await SharedPreferences.getInstance();
-    final currentUserId = user?.uid ?? prefs.getString('guestId');
+    if (user == null) return;
 
     final calendarQuery = await FirebaseFirestore.instance.collection('calendars').get();
 
@@ -245,14 +301,21 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       final calendarName = (doc['name'] ?? 'Shared Calendar').toString();
       final isShared = (doc['isShared'] ?? false) == true;
 
-      final rawMembers = doc['members'] ?? [];
-      final members = rawMembers.map<String>((m) {
-        if (m is String) return m;
-        if (m is Map && m.containsKey('id')) return m['id'] as String;
-        return '';
-      }).toList();
+      // membership
+      List<String> memberIds = [];
+      final rawMemberIds = doc.data()['memberIds'];
+      if (rawMemberIds is List) {
+        memberIds = rawMemberIds.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toList();
+      } else {
+        final rawMembers = doc['members'] ?? [];
+        memberIds = (rawMembers as List<dynamic>).map<String>((m) {
+          if (m is String) return m;
+          if (m is Map && m['id'] != null) return m['id'].toString();
+          return '';
+        }).where((e) => e.isNotEmpty).toList();
+      }
 
-      if (!members.contains(currentUserId)) continue;
+      if (!memberIds.contains(user.uid)) continue;
 
       final eventsSnap = await FirebaseFirestore.instance
           .collection('calendars')
@@ -267,7 +330,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
           final src = (data['source'] ?? '').toString();
           final creatorId = (data['creatorId'] ?? '').toString();
           if (src == 'google') continue; // ignore Google in shared
-          if (creatorId.isNotEmpty && creatorId != currentUserId) continue; // only mine
+          if (creatorId.isNotEmpty && creatorId != user.uid) continue; // only mine
         }
 
         final Timestamp? st = data['startTime'] as Timestamp?;
@@ -278,12 +341,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
         final end = et.toDate();
         final normalizedEnd = DateTime(end.year, end.month, end.day, 23, 59, 59);
 
-        final color = Color.fromARGB(
-          255,
-          random.nextInt(200),
-          random.nextInt(200),
-          random.nextInt(200),
-        );
+        final color = Color.fromARGB(255, random.nextInt(200), random.nextInt(200), random.nextInt(200));
         _eventColors[eventDoc.id] = color;
 
         for (DateTime d = start; !d.isAfter(normalizedEnd); d = d.add(const Duration(days: 1))) {
@@ -311,20 +369,17 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   Future<bool> _ensureGoogleSession() async {
     final svc = GoogleCalendarService.instance;
 
-    // Quiet path first (no popup)
-    final has = await svc.hasSession();
+    final has = await svc.hasSession(); // quiet path
     if (has) {
       if (mounted) setState(() => _googleSignedIn = true);
       return true;
     }
 
-    // Fallback to interactive popup only if needed
     try {
       await svc.ensureSignedInInteractive();
       if (mounted) setState(() => _googleSignedIn = true);
       return true;
     } catch (_) {
-      // user may have closed picker
       if (mounted) setState(() => _googleSignedIn = false);
       return false;
     }
@@ -338,111 +393,133 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       _linkedCalendarSummary = null;
       _googleSignedIn = false;
     });
-    // Let user choose a different account + calendar
     await _pickCalendarAndImport();
     await _loadGoogleCfg();
   }
 
-  // Card UI (same as Shared)
+  // === Google glass-card (same as Shared) ===
   Future<void> _openGoogleCard() async {
-    // Quiet check — do NOT trigger popup
     _googleSignedIn = await GoogleCalendarService.instance.hasSession();
     if (!mounted) return;
 
-    final bool isLinked = _googleSyncEnabled && (_linkedCalendarSummary ?? '').isNotEmpty;
-
     await showDialog<void>(
       context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        titlePadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
-        contentPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      barrierDismissible: true,
+      barrierColor: Colors.transparent, // keep page bright behind
+      builder: (_) {
+        final theme  = Theme.of(context);
+        final cs     = theme.colorScheme;
+        final isDark = theme.brightness == Brightness.dark;
+        final gv     = _glassVars(context);
+        final bool isLinked = _googleSyncEnabled && (_linkedCalendarSummary ?? '').isNotEmpty;
 
-        // Title
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              const SizedBox(width: 8),
-              Text('Add event via Google calendar',
-                  style: TextStyle(color: textDark, fontWeight: FontWeight.bold),
-                  overflow: TextOverflow.ellipsis),
+        return Dialog(
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          child: DecoratedBox(
+            decoration: BoxDecoration(boxShadow: [
+              BoxShadow(
+                blurRadius: isDark ? 18 : 22,
+                offset: const Offset(0, 6),
+                color: Colors.black.withOpacity(gv.shadowOpacity),
+              ),
             ]),
-            const SizedBox(height: 12),
-          ],
-        ),
+            child: GlassPanel(
+              radius: const BorderRadius.all(Radius.circular(18)),
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+              blur: gv.blur,
+              opacity: gv.opacity,
+              accentBorder: true,
+              accentOpacity: gv.accentOpacity,
+              borderWidth: gv.borderWidth,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 480),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Add event via Google Calendar',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: cs.onSurface,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
 
-        // Actions
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (!isLinked)
-                _GoogleActionTile(
-                  icon: Icons.cloud_sync,
-                  text: 'Link a Google calendar',
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await _onAddGoogleSync();
-                    await _loadGoogleCfg();
-                  },
-                ),
-              if (isLinked)
-                _GoogleActionTile(
-                  icon: Icons.sync,
-                  text: 'Sync now',
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await _syncNow();
-                    await _loadGoogleCfg();
-                  },
-                ),
-              if (isLinked)
-                _GoogleActionTile(
-                  icon: Icons.event_available,
-                  text: 'Choose Google calendar',
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await _chooseAnotherCalendar();
-                    await _loadGoogleCfg();
-                  },
-                ),
-              if (_googleSignedIn || isLinked)
-                _GoogleActionTile(
-                  icon: Icons.account_circle,
-                  text: 'Switch Google account',
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await _switchGoogleAccount();
-                  },
-                ),
-              if (isLinked)
-                _GoogleActionTile(
-                  icon: Icons.link_off,
-                  text: 'Disconnect & remove Google events',
-                  destructive: true,
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await _onToggleGoogleSync(false);
-                    await _loadGoogleCfg();
-                  },
-                ),
-            ],
-          ),
-        ),
+                    if (!isLinked)
+                      _GoogleActionTile(
+                        icon: Icons.cloud_sync,
+                        text: 'Link a Google calendar',
+                        onTap: () async {
+                          Navigator.pop(context);
+                          await _onAddGoogleSync();
+                          await _loadGoogleCfg();
+                        },
+                      ),
+                    if (isLinked)
+                      _GoogleActionTile(
+                        icon: Icons.sync,
+                        text: 'Sync now',
+                        onTap: () async {
+                          Navigator.pop(context);
+                          await _syncNow();
+                          await _loadGoogleCfg();
+                        },
+                      ),
+                    if (isLinked)
+                      _GoogleActionTile(
+                        icon: Icons.event_available,
+                        text: 'Choose Google calendar',
+                        onTap: () async {
+                          Navigator.pop(context);
+                          await _chooseAnotherCalendar();
+                          await _loadGoogleCfg();
+                        },
+                      ),
+                    if (_googleSignedIn || isLinked)
+                      _GoogleActionTile(
+                        icon: Icons.account_circle,
+                        text: 'Switch Google account',
+                        onTap: () async {
+                          Navigator.pop(context);
+                          await _switchGoogleAccount();
+                        },
+                      ),
+                    if (isLinked)
+                      _GoogleActionTile(
+                        icon: Icons.link_off,
+                        text: 'Disconnect & remove Google events',
+                        destructive: true,
+                        onTap: () async {
+                          Navigator.pop(context);
+                          await _onToggleGoogleSync(false);
+                          await _loadGoogleCfg();
+                        },
+                      ),
 
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: TextButton.styleFrom(
+                          foregroundColor: cs.primary,
+                          overlayColor: cs.primary.withOpacity(0.08),
+                        ),
+                        child: const Text('Close'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ],
-      ),
+        );
+      },
     );
 
-    // After dialog closes, reflect real session status (in case user closed pickers)
     _googleSignedIn = await GoogleCalendarService.instance.hasSession();
     if (mounted) setState(() {});
   }
@@ -455,7 +532,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     }
     if (!await _ensureGoogleSession()) return;
 
-    // If already linked → just sync
     final cfgSnap = await FirebaseFirestore.instance
         .collection('calendars')
         .doc(_masterCalendarId)
@@ -499,8 +575,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       _toast('Google sync off • removed $removed events', icon: Icons.link_off, color: Colors.deepOrange);
       return;
     }
-
-    // enabling path
     await _pickCalendarAndImport();
   }
 
@@ -530,7 +604,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     if (!await _ensureGoogleSession()) return;
     final svc = GoogleCalendarService.instance;
 
-    // 1) List calendars
     final calendars = await _withLoading<List<gcal.CalendarListEntry>>(
       message: 'Connecting to Google…',
       task: () => svc.listCalendars(),
@@ -540,7 +613,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       return;
     }
 
-    // 2) Choose
     final chosen = await showModalBottomSheet<gcal.CalendarListEntry>(
       context: context,
       isScrollControlled: true,
@@ -548,7 +620,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     );
     if (chosen == null) return;
 
-    // 3) Pull events in window
     final now = DateTime.now();
     final pulled = await _withLoading(
       message: 'Fetching events…',
@@ -560,9 +631,8 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       ),
     );
 
-    // 4) Map & preview selection
     final preview = <Map<String, dynamic>>[];
-    for (final e in pulled.events) {
+    for (final e in (pulled.items ?? const <gcal.Event>[])) {
       final m = _mapGoogleEventToLocalDoc(e);
       if (m != null) preview.add(m);
     }
@@ -581,7 +651,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
     final imported = await _importEventsToMaster(selected);
 
-    // 5) Save cfg
     if (_masterCalendarId != null) {
       await FirebaseFirestore.instance
           .collection('calendars')
@@ -593,7 +662,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
         'calendarId': chosen.id,
         'calendarSummary': chosen.summary,
         'syncToken': pulled.nextSyncToken,
-        'lastSyncAt': Timestamp.now(),
+        'lastSyncAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     }
 
@@ -603,7 +672,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       _googleSignedIn = true;
     });
 
-    _toast('Imported $imported events from Google.', icon: Icons.cloud_done, color: buttonColor);
+    _toast('Imported $imported events from Google.', icon: Icons.cloud_done);
     await _loadEvents();
   }
 
@@ -611,7 +680,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     if (_masterCalendarId == null) return;
     if (!await _ensureGoogleSession()) return;
 
-    // Read cfg
     final cfgSnap = await FirebaseFirestore.instance
         .collection('calendars')
         .doc(_masterCalendarId)
@@ -628,7 +696,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final svc = GoogleCalendarService.instance;
     final win = _syncWindow();
 
-    // 1) Pull full window (no incremental token → robust & matches Shared)
     final pulled = await _withLoading(
       message: 'Syncing…',
       task: () => svc.listEvents(
@@ -639,15 +706,13 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       ),
     );
 
-    // 2) Map Google → local
     final googleMapped = <Map<String, dynamic>>[];
-    for (final e in pulled.events) {
+    for (final e in (pulled.items ?? const <gcal.Event>[])) {
       final m = _mapGoogleEventToLocalDoc(e);
       if (m != null) googleMapped.add(m);
     }
     final googleKeys = <String>{ for (final m in googleMapped) _keyForMapped(m) };
 
-    // 3) Read existing local Google events in the same window (personal calendar only)
     final col = await _personalEventsCol();
     final existingSnap = await col
         .where('source', isEqualTo: 'google')
@@ -662,20 +727,16 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       existingKeys[key] = d.id;
     }
 
-    // 4) Diff
     final toAdd = <Map<String, dynamic>>[];
     for (final m in googleMapped) {
       final key = _keyForMapped(m);
       if (!existingKeys.containsKey(key)) toAdd.add(m);
     }
-    final toDelete = <String>[]; // docIds
+    final toDelete = <String>[];
     for (final entry in existingKeys.entries) {
-      if (!googleKeys.contains(entry.key)) {
-        toDelete.add(entry.value);
-      }
+      if (!googleKeys.contains(entry.key)) toDelete.add(entry.value);
     }
 
-    // 5) Apply (batched)
     int added = 0, deleted = 0;
     WriteBatch batch = FirebaseFirestore.instance.batch();
 
@@ -691,15 +752,14 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     }
     await batch.commit();
 
-    // 6) Save metadata (keep token fresh if provided; not essential here)
     await FirebaseFirestore.instance
         .collection('calendars')
-        .doc(_masterCalendarId)
+        .doc(_masterCalendarId!)
         .collection('integrations')
         .doc('google')
         .set({
       'syncToken': pulled.nextSyncToken ?? cfg['syncToken'],
-      'lastSyncAt': Timestamp.now(),
+      'lastSyncAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
     _toast('Sync complete: added $added, deleted $deleted');
@@ -707,7 +767,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   }
 
   // ---------- mapping / import ----------
-
   Map<String, dynamic>? _mapGoogleEventToLocalDoc(gcal.Event e) {
     if (e.status == 'cancelled') return null;
 
@@ -719,7 +778,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
     if (e.start?.dateTime != null && e.end?.dateTime != null) {
       start = e.start!.dateTime!.toLocal();
-      end = e.end!.dateTime!.toLocal();
+      end   = e.end!.dateTime!.toLocal();
     } else if (e.start?.date != null && e.end?.date != null) {
       final s = e.start!.date!;
       final t = e.end!.date!;
@@ -745,13 +804,11 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     };
   }
 
-  /// Import selected events into personal calendar with de-dupe (last year)
   Future<int> _importEventsToMaster(List<Map<String, dynamic>> events) async {
     if (events.isEmpty) return 0;
 
     final ref = await _personalEventsCol();
 
-    // De-dupe over last year
     final now = DateTime.now();
     final from = DateTime(now.year - 1);
     final existingSnap = await ref
@@ -762,8 +819,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final seen = <String>{};
     for (final d in existingSnap.docs) {
       final m = d.data();
-      final k = _keyForLocal(m);
-      seen.add(k);
+      seen.add(_keyForLocal(m));
     }
 
     final batch = FirebaseFirestore.instance.batch();
@@ -782,115 +838,145 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   // ---------- UI ----------
 
   Widget _buildEventCard(Map<String, dynamic> event, {DateTime? displayDate}) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    final gv = _glassVars(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final String creator = (event['creatorName'] ?? '').toString().trim();
     final String calendarName = (event['calendarName'] ?? '').toString().trim();
     final bool isSharedEvent = event['isShared'] == true;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: lightCard,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: const [BoxShadow(blurRadius: 4, color: Colors.black12)],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: DecoratedBox(
+        decoration: BoxDecoration(boxShadow: [
+          BoxShadow(
+            blurRadius: isDark ? 16 : 18,
+            offset: const Offset(0, 3),
+            color: Colors.black.withOpacity(gv.shadowOpacity * 0.8),
+          ),
+        ]),
+        child: GlassPanel(
+          radius: const BorderRadius.all(Radius.circular(16)),
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 8),
+          blur: gv.blur,
+          opacity: gv.opacity,
+          accentBorder: true,
+          accentOpacity: gv.accentOpacity,
+          borderWidth: gv.borderWidth,
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text('•', style: TextStyle(fontSize: 20, height: 1.2, color: textDark)),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text('•', style: TextStyle(fontSize: 20, height: 1.2, color: cs.onSurface)),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${event['title']}',
+                          style: tt.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: cs.onSurface,
+                            height: 1.2,
+                          ),
+                        ),
+                        if (isSharedEvent && creator.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              calendarName.isNotEmpty ? 'by $creator on $calendarName' : 'by $creator',
+                              style: tt.bodySmall?.copyWith(
+                                color: cs.onSurface.withOpacity(0.8),
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
+                        if (event['startTime'] != null && event['endTime'] != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              _formatEventTime(
+                                displayDate ?? _selectedDay,
+                                (event['startTime'] as Timestamp?)?.toDate(),
+                                (event['endTime'] as Timestamp?)?.toDate(),
+                              ),
+                              style: tt.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: cs.onSurface,
+                              ),
+                            ),
+                          ),
+                        if ((event['description'] ?? '').toString().isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              event['description'],
+                              style: tt.bodySmall?.copyWith(
+                                color: cs.onSurface.withOpacity(0.9),
+                                fontWeight: FontWeight.w300,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${event['title']}',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textDark, height: 1.2)),
-                    if (isSharedEvent && creator.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          calendarName.isNotEmpty ? 'by $creator on $calendarName' : 'by $creator',
-                          style: TextStyle(fontSize: 13, color: textDark.withOpacity(0.7), fontStyle: FontStyle.italic),
-                        ),
-                      ),
-                    if (event['startTime'] != null && event['endTime'] != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(
-                          _formatEventTime(
-                            displayDate ?? _selectedDay,
-                            (event['startTime'] as Timestamp?)?.toDate(),
-                            (event['endTime'] as Timestamp?)?.toDate(),
-                          ),
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: textDark),
-                        ),
-                      ),
-                    if ((event['description'] ?? '').toString().isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(
-                          event['description'],
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w300,
-                            fontFamily: 'Roboto',
-                            color: textDark.withOpacity(0.85),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () async {
+                      await EventCrud.showAddOrEditDialog(
+                        context: context,
+                        getEventsCollection: () async => FirebaseFirestore.instance
+                            .collection('calendars')
+                            .doc(event['calendarId'])
+                            .collection('events'),
+                        canEdit: true,
+                        disallowPastDates: true,
+                        existingEvent: event,
+                        buttonColor: cs.primary,
+                        textDark: cs.onPrimary,
+                        onAfterWrite: _loadEvents,
+                      );
+                    },
+                    child: const Text('Edit'),
+                  ),
+                  TextButton(
+                    onPressed: () => EventCrud.confirmAndDelete(
+                      context: context,
+                      getEventsCollection: () async => FirebaseFirestore.instance
+                          .collection('calendars')
+                          .doc(event['calendarId'])
+                          .collection('events'),
+                      eventId: event['id'],
+                      onAfterDelete: _loadEvents,
+                    ),
+                    child: const Text('Delete'),
+                  ),
+                ],
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: () async {
-                  await EventCrud.showAddOrEditDialog(
-                    context: context,
-                    getEventsCollection: () async => FirebaseFirestore.instance
-                        .collection('calendars')
-                        .doc(event['calendarId'])
-                        .collection('events'),
-                    canEdit: true,
-                    disallowPastDates: true,
-                    existingEvent: event,
-                    buttonColor: buttonColor,
-                    textDark: textDark,
-                    onAfterWrite: _loadEvents,
-                  );
-                },
-                child: const Text('Edit'),
-              ),
-              TextButton(
-                onPressed: () => EventCrud.confirmAndDelete(
-                  context: context,
-                  getEventsCollection: () async => FirebaseFirestore.instance
-                      .collection('calendars')
-                      .doc(event['calendarId'])
-                      .collection('events'),
-                  eventId: event['id'],
-                  onAfterDelete: _loadEvents,
-                ),
-                child: const Text('Delete'),
-              ),
-            ],
-          ),
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildMonthAgenda() {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+
     final first = DateTime(_focusedDay.year, _focusedDay.month, 1);
     final last = DateTime(_focusedDay.year, _focusedDay.month + 1, 0);
 
@@ -905,7 +991,10 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
           child: Text(
             DateFormat('EEE, d MMM yyyy').format(day),
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: textDark.withOpacity(0.8)),
+            style: tt.labelLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: cs.onSurface.withOpacity(0.8),
+            ),
           ),
         ),
       );
@@ -921,10 +1010,14 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     return Column(children: items);
   }
 
-  // ---------- UI build ----------
   @override
   Widget build(BuildContext context) {
-    final calendarWidget = TableCalendar(
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final gv = _glassVars(context);
+
+    final calendarCore = TableCalendar(
       firstDay: DateTime.utc(2000),
       lastDay: DateTime.utc(2100),
       focusedDay: _focusedDay,
@@ -932,7 +1025,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       onDaySelected: (selectedDay, focusedDay) {
         setState(() {
           _selectedDay = selectedDay;
-          _focusedDay = focusedDay;
+          _focusedDay  = focusedDay;
         });
       },
       onPageChanged: (focusedDay) {
@@ -944,44 +1037,39 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
           _selectedDay = DateTime(focusedDay.year, focusedDay.month, newDay);
         });
       },
-      onHeaderTapped: (date) async {
-        final picked = await showDatePicker(
-          context: context,
-          initialDate: _focusedDay,
-          firstDate: DateTime(2000),
-          lastDate: DateTime(2100),
-          initialEntryMode: DatePickerEntryMode.calendarOnly,
-          initialDatePickerMode: DatePickerMode.year,
-        );
-        if (picked != null) {
-          final carry = _selectedDay.day;
-          final lastDay = DateTime(picked.year, picked.month + 1, 0).day;
-          final newDay = min(carry, lastDay);
-          setState(() {
-            _focusedDay = picked;
-            _selectedDay = DateTime(picked.year, picked.month, newDay);
-          });
-        }
-      },
-      calendarFormat: CalendarFormat.month,
       eventLoader: (d) => _events[DateTime(d.year, d.month, d.day)] ?? [],
       headerStyle: HeaderStyle(
         formatButtonVisible: false,
         titleCentered: true,
-        titleTextStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textDark),
+        titleTextStyle: tt.titleSmall!.copyWith(fontWeight: FontWeight.bold, color: cs.onSurface),
         headerPadding: const EdgeInsets.symmetric(vertical: 8),
+        leftChevronIcon: Icon(Icons.chevron_left, color: cs.onSurface),
+        rightChevronIcon: Icon(Icons.chevron_right, color: cs.onSurface),
+      ),
+      calendarStyle: CalendarStyle(
+        selectedDecoration: const BoxDecoration(shape: BoxShape.circle).copyWith(color: cs.primary),
+        selectedTextStyle: TextStyle(color: cs.onPrimary, fontWeight: FontWeight.w700),
+        todayDecoration: const BoxDecoration(shape: BoxShape.circle).copyWith(color: cs.secondaryContainer),
+        todayTextStyle: TextStyle(color: cs.onSecondaryContainer, fontWeight: FontWeight.w700),
+        defaultTextStyle: tt.bodyMedium!.copyWith(color: cs.onSurface),
+        weekendTextStyle: tt.bodyMedium!.copyWith(color: cs.onSurface),
+        outsideTextStyle: tt.bodyMedium!.copyWith(color: cs.onSurface.withOpacity(0.40)),
+        markerDecoration: BoxDecoration(color: cs.tertiary, shape: BoxShape.circle),
+        outsideDaysVisible: true,
       ),
       calendarBuilders: CalendarBuilders(
-        headerTitleBuilder: (context, day) {
-          return InkWell(
+        headerTitleBuilder: (context, day) => Material(
+          color: Colors.transparent,
+          child: InkWell(
+            splashColor: Colors.transparent,
             onTap: () async {
               final picked = await showDatePicker(
                 context: context,
                 initialDate: _focusedDay,
                 firstDate: DateTime(2000),
                 lastDate: DateTime(2100),
-                initialEntryMode: DatePickerEntryMode.calendarOnly,
                 initialDatePickerMode: DatePickerMode.year,
+                initialEntryMode: DatePickerEntryMode.calendarOnly,
               );
               if (picked != null) {
                 final carry = _selectedDay.day;
@@ -993,33 +1081,32 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                 });
               }
             },
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.calendar_today, size: 20, color: textDark),
-                  const SizedBox(width: 6),
-                  Text(
-                    DateFormat('MMMM yyyy').format(_focusedDay),
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textDark),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.calendar_today, size: 20, color: cs.onSurface),
+                const SizedBox(width: 6),
+                Text(
+                  DateFormat('MMMM yyyy').format(_focusedDay),
+                  style: tt.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: cs.onSurface,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          );
-        },
+          ),
+        ),
         markerBuilder: (context, date, events) {
           if (events.isEmpty) return const SizedBox();
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: events.map((e) {
               final event = e as Map<String, dynamic>;
-              final color = _eventColors[event['id']] ?? Colors.purple;
+              final color = _eventColors[event['id']] ?? cs.tertiary;
               return Container(
                 margin: const EdgeInsets.symmetric(horizontal: 0.5, vertical: 1.5),
-                width: 6,
-                height: 6,
+                width: 6, height: 6,
                 decoration: BoxDecoration(color: color, shape: BoxShape.circle),
               );
             }).toList(),
@@ -1028,12 +1115,64 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       ),
     );
 
+    // glassed calendar frame
+    final calendarPanel = GlassPanel(
+      radius: const BorderRadius.all(Radius.circular(20)),
+      padding: const EdgeInsets.all(12),
+      blur: gv.blur,
+      opacity: gv.opacity,
+      accentBorder: true,
+      accentOpacity: gv.accentOpacity,
+      borderWidth: gv.borderWidth,
+      child: calendarCore,
+    );
+
+    Widget buildModeChip(
+      BuildContext context, {
+      required String label,
+      required bool selected,
+      required VoidCallback onTap,
+    }) {
+      final cs = Theme.of(context).colorScheme;
+      return ChoiceChip(
+        label: Text(label),
+        selected: selected,
+        showCheckmark: false,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        backgroundColor: cs.surface,
+        selectedColor: cs.secondaryContainer,
+        labelStyle: TextStyle(
+          fontWeight: FontWeight.w600,
+          color: selected ? cs.onSecondaryContainer : cs.onSurface,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(999),
+          side: BorderSide(
+            color: selected ? cs.primary : cs.outlineVariant,
+            width: selected ? 1.25 : 1.0,
+          ),
+        ),
+        onSelected: (_) => onTap(),
+      );
+    }
+
+    ButtonStyle _pillBtn() => ElevatedButton.styleFrom(
+      backgroundColor: cs.secondaryContainer,
+      foregroundColor: cs.onSecondaryContainer,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      textStyle: tt.labelLarge,
+    );
+
     final titleText = _agendaView == _AgendaView.day
         ? 'Your schedule for ${DateFormat('EEE, d MMM yyyy').format(_selectedDay)}'
         : 'Your schedule for ${DateFormat('MMMM yyyy').format(_focusedDay)}';
 
     return Scaffold(
-      backgroundColor: bgColor,
+      backgroundColor: Colors.transparent,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : SafeArea(
@@ -1043,11 +1182,11 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     MediaQuery.of(context).size.width < 500
-                        ? SizedBox(height: 440, child: calendarWidget)
-                        : calendarWidget,
+                        ? SizedBox(height: 440, child: calendarPanel)
+                        : calendarPanel,
                     const SizedBox(height: 12),
 
-                    // ===== Toolbar (chips + Google button + Add Event) =====
+                    // Toolbar
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8.0),
                       child: Column(
@@ -1061,16 +1200,8 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                                 spacing: 8,
                                 runSpacing: 8,
                                 children: [
-                                  ChoiceChip(
-                                    label: const Text('Day'),
-                                    selected: _agendaView == _AgendaView.day,
-                                    onSelected: (_) => setState(() => _agendaView = _AgendaView.day),
-                                  ),
-                                  ChoiceChip(
-                                    label: const Text('Month'),
-                                    selected: _agendaView == _AgendaView.month,
-                                    onSelected: (_) => setState(() => _agendaView = _AgendaView.month),
-                                  ),
+                                  buildModeChip(context, label: 'Day', selected: _agendaView == _AgendaView.day, onTap: () => setState(() => _agendaView = _AgendaView.day)),
+                                  buildModeChip(context, label: 'Month', selected: _agendaView == _AgendaView.month, onTap: () => setState(() => _agendaView = _AgendaView.month)),
                                 ],
                               );
 
@@ -1078,7 +1209,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                                     onPressed: _openGoogleCard,
                                     icon: const Icon(Icons.cloud_sync, size: 18),
                                     label: ConstrainedBox(
-                                      constraints: const BoxConstraints(maxWidth: 210),
+                                      constraints: const BoxConstraints(maxWidth: 220),
                                       child: Text(
                                         _googleSyncEnabled
                                             ? (_linkedCalendarSummary?.isNotEmpty == true
@@ -1088,28 +1219,14 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: lightCard,
-                                      foregroundColor: textDark,
-                                      elevation: 0,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                                      textStyle: const TextStyle(fontSize: 13),
-                                    ),
+                                    style: _pillBtn(),
                                   );
 
                               Widget addBtn() => ElevatedButton.icon(
                                     onPressed: _openManualAdd,
                                     icon: const Icon(Icons.add, size: 18),
                                     label: const Text('Add Event'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: lightCard,
-                                      foregroundColor: textDark,
-                                      elevation: 0,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                                      textStyle: const TextStyle(fontSize: 13),
-                                    ),
+                                    style: _pillBtn(),
                                   );
 
                               if (narrow) {
@@ -1139,11 +1256,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                             titleText,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 14,
+                            style: tt.bodyMedium?.copyWith(
                               fontWeight: FontWeight.w600,
-                              fontFamily: 'Roboto',
-                              color: buttonColor,
+                              color: cs.primary,
                             ),
                           ),
                         ],
@@ -1172,6 +1287,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
   // ---------- Manual Add ----------
   Future<void> _openManualAdd() async {
+    final cs = Theme.of(context).colorScheme;
     await EventCrud.showAddOrEditDialog(
       context: context,
       getEventsCollection: _personalEventsCol,
@@ -1180,15 +1296,15 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       existingEvent: null,
       initialSelectedDay: _selectedDay,
       onAfterWrite: _loadEvents,
-      buttonColor: buttonColor,
-      textDark: textDark,
+      buttonColor: cs.primary,
+      textDark: cs.onPrimary,
     );
   }
 }
 
-// ===== Reusable tiles/sheets (same style as Shared) =====
+// ===== Reusable tiles/sheets (identical styling to Shared) =====
 
-class _GoogleActionTile extends StatelessWidget {
+class _GoogleActionTile extends StatefulWidget {
   final IconData icon;
   final String text;
   final bool destructive;
@@ -1202,15 +1318,53 @@ class _GoogleActionTile extends StatelessWidget {
   });
 
   @override
+  State<_GoogleActionTile> createState() => _GoogleActionTileState();
+}
+
+class _GoogleActionTileState extends State<_GoogleActionTile> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
-    final disabled = onTap == null;
-    final color = disabled ? Colors.grey : (destructive ? Colors.red : Colors.black87);
-    return ListTile(
-      leading: Icon(icon, color: color),
-      title: Text(text, style: TextStyle(color: color, fontWeight: FontWeight.w500)),
-      dense: true,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      onTap: onTap,
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    final disabled = widget.onTap == null;
+    final accent = widget.destructive ? Colors.red : cs.primary;
+    final baseFg = widget.destructive ? Colors.red : cs.onSurface;
+
+    final fg = disabled ? cs.outline : (_hover ? accent : baseFg);
+    final bg = _hover
+        ? (widget.destructive
+            ? Colors.red.withOpacity(isDark ? 0.14 : 0.10)
+            : cs.primary.withOpacity(isDark ? 0.12 : 0.08))
+        : Colors.transparent;
+    final border = _hover
+        ? accent.withOpacity(isDark ? 0.50 : 0.60)
+        : Colors.transparent;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      cursor: widget.onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOut,
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: border, width: 1),
+        ),
+        child: ListTile(
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          leading: Icon(widget.icon, color: fg),
+          title: Text(widget.text, style: TextStyle(color: fg, fontWeight: FontWeight.w500)),
+          onTap: widget.onTap,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
     );
   }
 }
@@ -1283,6 +1437,7 @@ class _PreviewSelectSheetState extends State<_PreviewSelectSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.86,
@@ -1328,6 +1483,10 @@ class _PreviewSelectSheetState extends State<_PreviewSelectSheet> {
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.download),
                     label: Text('Import (${_selected.length})'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: cs.primary,
+                      foregroundColor: cs.onPrimary,
+                    ),
                     onPressed: _selected.isEmpty
                         ? null
                         : () {
