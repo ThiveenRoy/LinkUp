@@ -92,11 +92,21 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
 
   ({DateTime from, DateTime to}) _syncWindow() {
     final now = DateTime.now();
-    return (from: DateTime(now.year, now.month - 6, now.day),
-            to:   DateTime(now.year + 1, now.month, now.day));
+    return (
+      from: DateTime(now.year, now.month - 6, now.day),
+      to: DateTime(now.year + 1, now.month, now.day),
+    );
   }
 
   DateTime _startOfDay(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  String _ownerIdFrom(Map<String, dynamic>? data) {
+    if (data == null) return '';
+    final ownerField = data['owner'];
+    if (ownerField is String) return ownerField;
+    if (ownerField is Map && ownerField['id'] != null) return ownerField['id'].toString();
+    return '';
+  }
 
   @override
   void initState() {
@@ -183,10 +193,10 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4)),
-              const SizedBox(width: 12),
-              Flexible(child: Text(message, style: const TextStyle(fontSize: 14))),
+            children: const [
+              SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4)),
+              SizedBox(width: 12),
+              Flexible(child: Text('')),
             ],
           ),
         ),
@@ -213,7 +223,9 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
 
       final List rawMembers = (data['members'] ?? []) as List;
       final current = rawMembers.map<Map<String, String>>((e) {
-        if (e is Map) return {'id': (e['id'] ?? '').toString(), 'name': (e['name'] ?? 'User').toString()};
+        if (e is Map) {
+          return {'id': (e['id'] ?? '').toString(), 'name': (e['name'] ?? 'User').toString()};
+        }
         return {'id': e.toString(), 'name': 'User'};
       }).toList();
 
@@ -245,7 +257,9 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     final members = (data['members'] ?? []) as List<dynamic>;
     setState(() {
       _participants = members.map<Map<String, String>>((e) {
-        if (e is Map) return {'id': (e['id'] ?? '').toString(), 'name': (e['name'] ?? 'User').toString()};
+        if (e is Map) {
+          return {'id': (e['id'] ?? '').toString(), 'name': (e['name'] ?? 'User').toString()};
+        }
         return {'id': e.toString(), 'name': 'User'};
       }).toList();
     });
@@ -257,7 +271,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     final doc = await FirebaseFirestore.instance.collection('calendars').doc(widget.calendarId).get();
     final data = doc.data();
     if (data == null) return;
-    final ownerId = (data['owner'] ?? '').toString();
+    final ownerId = _ownerIdFrom(data);
     final allowEdit = data['allowEdit'] == true;
     setState(() {
       _canEdit = (user.uid == ownerId) || allowEdit;
@@ -275,9 +289,9 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     if (calId == null || uid == null) return;
     final cfg = await loadGoogleCfgForCalendar(calId, uid);
     setState(() {
-      _googleSyncEnabled     = cfg.enabled;
+      _googleSyncEnabled = cfg.enabled;
       _linkedCalendarSummary = cfg.calendarSummary;
-      _linkedCalendarId      = cfg.calendarId;
+      _linkedCalendarId = cfg.calendarId;
     });
   }
 
@@ -299,19 +313,33 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
   }
 
   Future<CollectionReference<Map<String, dynamic>>> _sharedEventsCol() async {
-    return FirebaseFirestore.instance
-        .collection('calendars')
-        .doc(widget.calendarId)
-        .collection('events');
+    return FirebaseFirestore.instance.collection('calendars').doc(widget.calendarId).collection('events');
   }
 
-  Future<void> _touchCalendar({String? byId, String? byName}) {
-    return FirebaseFirestore.instance.collection('calendars').doc(widget.calendarId).update({
-      'lastUpdatedAt': FieldValue.serverTimestamp(),
-      if (byId != null) 'updatedBy': byId,
-      if (byName != null) 'updatedByName': byName,
+  Future<void> _touchCalendar({
+  required String byId,
+  required String byName,
+}) async {
+  final ref = FirebaseFirestore.instance
+      .collection('calendars')
+      .doc(widget.calendarId);
+
+  try {
+    await FirebaseFirestore.instance.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      if (!snap.exists) return; // nothing to update
+      tx.update(ref, <String, dynamic>{
+        'lastUpdatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': byId,
+        'updatedByName': byName,
+      });
     });
+  } catch (e) {
+    _toast('Failed to update calendar metadata: $e',
+        icon: Icons.error, color: Colors.redAccent);
   }
+}
+
 
   // ---------- add event (manual) ----------
   Future<void> _openManualAdd() async {
@@ -326,7 +354,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
       creatorId: _currentUserId,
       creatorName: editorName,
       initialSelectedDay: _selectedDay,
-      onAfterWrite: () => _touchCalendar(byId: _currentUserId, byName: editorName),
+      onAfterWrite: () => _touchCalendar(byId: _currentUserId!, byName: editorName),
       buttonColor: cs.primary,
       textDark: cs.onSurface,
     );
@@ -340,12 +368,12 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     await showDialog<void>(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.transparent, // keep page bright
+      barrierColor: Colors.transparent,
       builder: (_) {
-        final theme  = Theme.of(context);
-        final cs     = theme.colorScheme;
+        final theme = Theme.of(context);
+        final cs = theme.colorScheme;
         final isDark = theme.brightness == Brightness.dark;
-        final gv     = _glassVars(context);
+        final gv = _glassVars(context);
         final bool isLinked = _googleSyncEnabled && (_linkedCalendarSummary ?? '').isNotEmpty;
 
         return Dialog(
@@ -353,13 +381,15 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
           backgroundColor: Colors.transparent,
           insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
           child: DecoratedBox(
-            decoration: BoxDecoration(boxShadow: [
-              BoxShadow(
-                blurRadius: isDark ? 18 : 22,
-                offset: const Offset(0, 6),
-                color: Colors.black.withOpacity(gv.shadowOpacity),
-              ),
-            ]),
+            decoration: BoxDecoration(
+              boxShadow: [
+                BoxShadow(
+                  blurRadius: isDark ? 18 : 22,
+                  offset: const Offset(0, 6),
+                  color: Colors.black.withOpacity(gv.shadowOpacity),
+                ),
+              ],
+            ),
             child: GlassPanel(
               radius: const BorderRadius.all(Radius.circular(18)),
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -382,54 +412,62 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                       ),
                     ),
                     const SizedBox(height: 6),
-
                     if (!isLinked)
                       _GoogleActionTile(
                         icon: Icons.cloud_sync,
                         text: 'Link a Google calendar',
-                        onTap: !_canEdit ? null : () async {
-                          Navigator.pop(context);
-                          await _onAddGoogleSync();
-                        },
+                        onTap: !_canEdit
+                            ? null
+                            : () async {
+                                Navigator.pop(context);
+                                await _onAddGoogleSync();
+                              },
                       ),
                     if (isLinked)
                       _GoogleActionTile(
                         icon: Icons.sync,
                         text: 'Sync now',
-                        onTap: !_canEdit ? null : () async {
-                          Navigator.pop(context);
-                          await _syncNow();
-                        },
+                        onTap: !_canEdit
+                            ? null
+                            : () async {
+                                Navigator.pop(context);
+                                await _syncNow();
+                              },
                       ),
                     if (isLinked)
                       _GoogleActionTile(
                         icon: Icons.event_available,
                         text: 'Choose Google calendar',
-                        onTap: !_canEdit ? null : () async {
-                          Navigator.pop(context);
-                          await _chooseAnotherCalendar();
-                        },
+                        onTap: !_canEdit
+                            ? null
+                            : () async {
+                                Navigator.pop(context);
+                                await _chooseAnotherCalendar();
+                              },
                       ),
                     if (_googleSignedIn || isLinked)
                       _GoogleActionTile(
                         icon: Icons.account_circle,
                         text: 'Switch Google account',
-                        onTap: !_canEdit ? null : () async {
-                          Navigator.pop(context);
-                          await _switchGoogleAccount();
-                        },
+                        onTap: !_canEdit
+                            ? null
+                            : () async {
+                                Navigator.pop(context);
+                                await _switchGoogleAccount();
+                              },
                       ),
                     if (isLinked)
                       _GoogleActionTile(
                         icon: Icons.link_off,
                         text: 'Disconnect & remove my Google events',
                         destructive: true,
-                        onTap: !_canEdit ? null : () async {
-                          Navigator.pop(context);
-                          await _onToggleGoogleSync(false);
-                        },
+                        onTap: !_canEdit
+                            ? null
+                            : () async {
+                                Navigator.pop(context);
+                                await _onToggleGoogleSync(false);
+                              },
                       ),
-
                     const SizedBox(height: 6),
                     Align(
                       alignment: Alignment.centerRight,
@@ -452,9 +490,12 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     );
   }
 
-  // ---------- Google logic (unchanged)
+  // ---------- Google logic ----------
   Future<void> _onAddGoogleSync() async {
-    if (!_canEdit) { _toast('You need edit access to manage Google sync', icon: Icons.lock, color: Colors.grey); return; }
+    if (!_canEdit) {
+      _toast('You need edit access to manage Google sync', icon: Icons.lock, color: Colors.grey);
+      return;
+    }
     if (!await _ensureGoogleSession()) return;
 
     final calId = widget.calendarId!;
@@ -477,7 +518,10 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     final calId = widget.calendarId;
     final uid = _currentUserId!;
     if (calId == null) return;
-    if (!_canEdit) { _toast('You need edit access to manage Google sync', icon: Icons.lock, color: Colors.grey); return; }
+    if (!_canEdit) {
+      _toast('You need edit access to manage Google sync', icon: Icons.lock, color: Colors.grey);
+      return;
+    }
 
     if (!enable) {
       final removed = await _withLoading<int>(
@@ -495,13 +539,19 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
           lastSyncAt: DateTime.now(),
         ),
       );
-      try { await GoogleCalendarService.instance.signOut(); } catch (_) {}
+      try {
+        await GoogleCalendarService.instance.signOut();
+      } catch (_) {}
       setState(() {
         _googleSyncEnabled = false;
         _linkedCalendarSummary = null;
         _linkedCalendarId = null;
         _googleSignedIn = false;
       });
+
+      final editorName = await _resolveDisplayName();
+      await _touchCalendar(byId: _currentUserId!, byName: editorName);
+
       _toast('Disconnected. Removed $removed of your Google events.', icon: Icons.link_off, color: Colors.deepOrange);
       return;
     }
@@ -510,9 +560,8 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
 
   Future<int> _purgeMyGoogleEventsForThisCalendar(String calendarId, String uid) async {
     final col = FirebaseFirestore.instance.collection('calendars').doc(calendarId).collection('events');
-    Query<Map<String, dynamic>> q = col
-        .where('source', isEqualTo: 'google')
-        .where('importOwners', arrayContains: uid);
+    Query<Map<String, dynamic>> q =
+        col.where('source', isEqualTo: 'google').where('importOwners', arrayContains: uid);
 
     int affected = 0;
     while (true) {
@@ -539,7 +588,9 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
   }
 
   Future<void> _switchGoogleAccount() async {
-    try { await GoogleCalendarService.instance.signOut(); } catch (_) {}
+    try {
+      await GoogleCalendarService.instance.signOut();
+    } catch (_) {}
     setState(() {
       _googleSyncEnabled = false;
       _linkedCalendarSummary = null;
@@ -556,7 +607,10 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
 
   Future<void> _pickCalendarAndImport() async {
     if (!await _ensureGoogleSession()) return;
-    if (!_canEdit) { _toast('You need edit access to import from Google', icon: Icons.lock, color: Colors.grey); return; }
+    if (!_canEdit) {
+      _toast('You need edit access to import from Google', icon: Icons.lock, color: Colors.grey);
+      return;
+    }
 
     final calId = widget.calendarId!;
     final uid = _currentUserId!;
@@ -630,6 +684,9 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
       _googleSignedIn = true;
     });
 
+    final editorName = await _resolveDisplayName();
+    await _touchCalendar(byId: _currentUserId!, byName: editorName);
+
     _toast('Imported $imported events from Google.', icon: Icons.cloud_done);
   }
 
@@ -663,12 +720,9 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
       final m = _mapGoogleEventToLocalDoc(e, googleCalendarId: gCalId);
       if (m != null) googleMapped.add(m);
     }
-    final googleKeys = <String>{ for (final m in googleMapped) _keyForMapped(m) };
+    final googleKeys = <String>{for (final m in googleMapped) _keyForMapped(m)};
 
-    final col = FirebaseFirestore.instance
-        .collection('calendars')
-        .doc(calId)
-        .collection('events');
+    final col = FirebaseFirestore.instance.collection('calendars').doc(calId).collection('events');
 
     final existingSnap = await col
         .where('source', isEqualTo: 'google')
@@ -697,7 +751,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     for (final m in googleMapped) {
       final gid = (m['googleEventId'] ?? '') as String;
       final ical = (m['iCalUID'] ?? '') as String;
-      final key  = _keyForMapped(m);
+      final key = _keyForMapped(m);
 
       String? docId = gid.isNotEmpty ? byGid[gid] : null;
       docId ??= ical.isNotEmpty ? byIcal[ical] : null;
@@ -756,11 +810,11 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     await saveGoogleCfgForCalendar(
       calId,
       uid,
-      cfg.copyWith(
-        syncToken: pulled.nextSyncToken ?? cfg.syncToken,
-        lastSyncAt: DateTime.now(),
-      ),
+      cfg.copyWith(syncToken: pulled.nextSyncToken ?? cfg.syncToken, lastSyncAt: DateTime.now()),
     );
+
+    final editorName = await _resolveDisplayName();
+    await _touchCalendar(byId: _currentUserId!, byName: editorName);
 
     _toast('Sync complete: added $added, updated $touched, pruned $pruned of your events.');
   }
@@ -811,17 +865,11 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
     if (events.isEmpty) return 0;
 
     final uid = _currentUserId!;
-    final ref = FirebaseFirestore.instance
-        .collection('calendars')
-        .doc(calendarId)
-        .collection('events');
+    final ref = FirebaseFirestore.instance.collection('calendars').doc(calendarId).collection('events');
 
     final now = DateTime.now();
     final from = DateTime(now.year - 1);
-    final existingSnap = await ref
-        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
-        .limit(3000)
-        .get();
+    final existingSnap = await ref.where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(from)).limit(3000).get();
 
     final existingByKey = <String, String>{};
     for (final d in existingSnap.docs) {
@@ -837,7 +885,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
 
     for (final raw in events) {
       final ev = Map<String, dynamic>.from(raw);
-      ev['creatorId']   ??= importerId;
+      ev['creatorId'] ??= importerId;
       ev['creatorName'] ??= importerName;
 
       final key = _keyForMapped(ev);
@@ -911,10 +959,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
         ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(999),
-          side: BorderSide(
-            color: selected ? cs.primary : cs.outlineVariant,
-            width: selected ? 1.25 : 1.0,
-          ),
+          side: BorderSide(color: selected ? cs.primary : cs.outlineVariant, width: selected ? 1.25 : 1.0),
         ),
         onSelected: (_) => onTap(),
       );
@@ -922,13 +967,15 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
 
     // Tonal pill buttons (Google / Add)
     ButtonStyle _pillBtn() => ElevatedButton.styleFrom(
-      backgroundColor: cs.secondaryContainer,
-      foregroundColor: cs.onSecondaryContainer,
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      textStyle: const TextStyle(fontSize: 13),
-    );
+          backgroundColor: cs.secondaryContainer,
+          foregroundColor: cs.onSecondaryContainer,
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          textStyle: const TextStyle(fontSize: 13),
+        );
+
+    bool _isOwner() => _ownerIdFrom(_calendarData) == _currentUserId;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -974,8 +1021,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
               }(),
             ),
           ),
-
-          if (_calendarData != null && _calendarData!['owner'] == _currentUserId)
+          if (_calendarData != null && _isOwner())
             Padding(
               padding: const EdgeInsets.only(right: 12),
               child: TextButton.icon(
@@ -1005,7 +1051,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
             if (snap.hasData) {
               final docs = snap.data!.docs;
               final calendarName = _calendarData?['name'] ?? 'Shared Calendar';
-              final ownerId = _calendarData?['owner'];
+              final ownerIdStr = _ownerIdFrom(_calendarData);
 
               for (final d in docs) {
                 final data = d.data();
@@ -1017,7 +1063,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                 final end = endTs.toDate();
                 final normalizedEnd = DateTime(end.year, end.month, end.day, 23, 59, 59);
 
-                final displayTitle = (ownerId != _currentUserId) ? '${data['title']}' : (data['title'] ?? '');
+                final displayTitle = (ownerIdStr != _currentUserId) ? '${data['title']}' : (data['title'] ?? '');
                 colors[d.id] = _colorForId(d.id);
 
                 for (DateTime dt = start; !dt.isAfter(normalizedEnd); dt = dt.add(const Duration(days: 1))) {
@@ -1045,10 +1091,9 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                 final creatorId = (event['creatorId'] ?? '').toString();
                 if (creatorId.isEmpty) return 'Unknown';
 
-                final fromMembers = _participants
-                        .firstWhere((p) => p['id'] == creatorId,
-                            orElse: () => const {'name': 'Unknown'})['name'] ??
-                    'Unknown';
+                final fromMembers =
+                    _participants.firstWhere((p) => p['id'] == creatorId, orElse: () => const {'name': 'Unknown'})['name'] ??
+                        'Unknown';
 
                 return (fromMembers.trim().isEmpty) ? 'Unknown' : fromMembers;
               }
@@ -1059,13 +1104,15 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 child: DecoratedBox(
-                  decoration: BoxDecoration(boxShadow: [
-                    BoxShadow(
-                      blurRadius: isDark ? 16 : 18,
-                      offset: const Offset(0, 3),
-                      color: Colors.black.withOpacity(gv.shadowOpacity * 0.8),
-                    ),
-                  ]),
+                  decoration: BoxDecoration(
+                    boxShadow: [
+                      BoxShadow(
+                        blurRadius: isDark ? 16 : 18,
+                        offset: const Offset(0, 3),
+                        color: Colors.black.withOpacity(gv.shadowOpacity * 0.8),
+                      ),
+                    ],
+                  ),
                   child: GlassPanel(
                     radius: const BorderRadius.all(Radius.circular(14)),
                     padding: const EdgeInsets.fromLTRB(14, 12, 12, 8),
@@ -1090,10 +1137,8 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text('${event['title']}',
-                                      style: theme.textTheme.titleMedium?.copyWith(
-                                        fontWeight: FontWeight.w700,
-                                        color: cs.onSurface,
-                                      )),
+                                      style:
+                                          theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurface)),
                                   if (creatorName.isNotEmpty || calendarName.isNotEmpty)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 2),
@@ -1102,10 +1147,8 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                           if (creatorName.isNotEmpty) 'by $creatorName',
                                           if (calendarName.isNotEmpty) 'on $calendarName',
                                         ].join(' '),
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          color: cs.onSurfaceVariant,
-                                          fontStyle: FontStyle.italic,
-                                        ),
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(color: cs.onSurfaceVariant, fontStyle: FontStyle.italic),
                                       ),
                                     ),
                                   if (event['startTime'] != null && event['endTime'] != null)
@@ -1117,10 +1160,8 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                           (event['startTime'] as Timestamp?)?.toDate(),
                                           (event['endTime'] as Timestamp?)?.toDate(),
                                         ),
-                                        style: theme.textTheme.bodyMedium?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                          color: cs.onSurface,
-                                        ),
+                                        style:
+                                            theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, color: cs.onSurface),
                                       ),
                                     ),
                                   if ((event['description'] ?? '').toString().isNotEmpty)
@@ -1128,9 +1169,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                       padding: const EdgeInsets.only(top: 6),
                                       child: Text(
                                         event['description'],
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          color: cs.onSurface.withOpacity(0.85),
-                                        ),
+                                        style: theme.textTheme.bodySmall?.copyWith(color: cs.onSurface.withOpacity(0.85)),
                                       ),
                                     ),
                                 ],
@@ -1148,9 +1187,8 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                   final editorName = await _resolveDisplayName();
                                   final startDate = (event['startTime'] as Timestamp?)?.toDate() ?? DateTime.now();
                                   if (_startOfDay(startDate).isBefore(_startOfDay(DateTime.now()))) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text("You can't edit events in the past.")),
-                                    );
+                                    ScaffoldMessenger.of(context)
+                                        .showSnackBar(const SnackBar(content: Text("You can't edit events in the past.")));
                                     return;
                                   }
                                   await EventCrud.showAddOrEditDialog(
@@ -1161,7 +1199,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                     existingEvent: event,
                                     updatedById: _currentUserId,
                                     updatedByName: editorName,
-                                    onAfterWrite: () => _touchCalendar(byId: _currentUserId, byName: editorName),
+                                    onAfterWrite: () => _touchCalendar(byId: _currentUserId!, byName: editorName),
                                     buttonColor: cs.primary,
                                     textDark: cs.onSurface,
                                   );
@@ -1170,12 +1208,17 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                               ),
                             if (_canEdit)
                               TextButton(
-                                onPressed: () => EventCrud.confirmAndDelete(
-                                  context: context,
-                                  getEventsCollection: _sharedEventsCol,
-                                  eventId: event['id'],
-                                  onAfterDelete: _touchCalendar,
-                                ),
+                                onPressed: () async {
+                                  await EventCrud.confirmAndDelete(
+                                    context: context,
+                                    getEventsCollection: _sharedEventsCol,
+                                    eventId: event['id'],
+                                    onAfterDelete: () async {
+                                      final editorName = await _resolveDisplayName();
+                                      await _touchCalendar(byId: _currentUserId!, byName: editorName);
+                                    },
+                                  );
+                                },
                                 child: const Text('Delete'),
                               ),
                           ],
@@ -1241,37 +1284,26 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                 });
               },
               eventLoader: eventsForDay,
-
-              // Keep everything on-theme (no default blue)
               calendarStyle: CalendarStyle(
                 selectedDecoration: const BoxDecoration(shape: BoxShape.circle).copyWith(color: cs.primary),
                 selectedTextStyle: TextStyle(color: cs.onPrimary, fontWeight: FontWeight.w700),
-
                 todayDecoration: const BoxDecoration(shape: BoxShape.circle).copyWith(color: cs.secondaryContainer),
                 todayTextStyle: TextStyle(color: cs.onSecondaryContainer, fontWeight: FontWeight.w700),
-
                 defaultTextStyle: TextStyle(color: cs.onSurface),
                 weekendTextStyle: TextStyle(color: cs.onSurface),
                 outsideTextStyle: TextStyle(color: cs.onSurface.withOpacity(0.45)),
-
                 markerDecoration: BoxDecoration(color: cs.tertiary, shape: BoxShape.circle),
-
                 isTodayHighlighted: true,
                 outsideDaysVisible: true,
               ),
-
               headerStyle: HeaderStyle(
                 formatButtonVisible: false,
                 titleCentered: true,
-                titleTextStyle: theme.textTheme.titleSmall!.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: cs.onSurface,
-                ),
+                titleTextStyle: theme.textTheme.titleSmall!.copyWith(fontWeight: FontWeight.bold, color: cs.onSurface),
                 headerPadding: const EdgeInsets.symmetric(vertical: 8),
                 leftChevronIcon: Icon(Icons.chevron_left, color: cs.onSurface),
                 rightChevronIcon: Icon(Icons.chevron_right, color: cs.onSurface),
               ),
-
               calendarBuilders: CalendarBuilders(
                 headerTitleBuilder: (context, day) => Material(
                   color: Colors.transparent,
@@ -1303,10 +1335,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                         const SizedBox(width: 6),
                         Text(
                           DateFormat('MMMM yyyy').format(_focusedDay),
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: cs.onSurface,
-                          ),
+                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold, color: cs.onSurface),
                         ),
                       ],
                     ),
@@ -1318,10 +1347,11 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: events.map((e) {
                       final event = e as Map<String, dynamic>;
-                      final color = colors[event['id']] ?? cs.tertiary; // not blue
+                      final color = colors[event['id']] ?? cs.tertiary;
                       return Container(
                         margin: const EdgeInsets.symmetric(horizontal: 0.5, vertical: 1.5),
-                        width: 6, height: 6,
+                        width: 6,
+                        height: 6,
                         decoration: BoxDecoration(color: color, shape: BoxShape.circle),
                       );
                     }).toList(),
@@ -1330,7 +1360,6 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
               ),
             );
 
-            // —— Glass panel around calendar (shared vars) ——
             final calendarPanel = GlassPanel(
               radius: const BorderRadius.all(Radius.circular(20)),
               padding: const EdgeInsets.all(12),
@@ -1342,21 +1371,15 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
               child: calendarCore,
             );
 
-            Widget _chip(String label, bool selected, VoidCallback onTap) => buildModeChip(
-              context,
-              label: label,
-              selected: selected,
-              onTap: onTap,
-            );
+            Widget _chip(String label, bool selected, VoidCallback onTap) =>
+                buildModeChip(context, label: label, selected: selected, onTap: onTap);
 
             return SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  MediaQuery.of(context).size.width < 500
-                      ? SizedBox(height: 440, child: calendarPanel)
-                      : calendarPanel,
+                  MediaQuery.of(context).size.width < 500 ? SizedBox(height: 440, child: calendarPanel) : calendarPanel,
                   const SizedBox(height: 12),
 
                   // Toolbar: chips + Google + Add
@@ -1389,7 +1412,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                     constraints: const BoxConstraints(maxWidth: 240),
                                     child: Text(
                                       _googleSyncEnabled
-                                          ? (_linkedCalendarSummary?.isNotEmpty == true
+                                          ? ((_linkedCalendarSummary?.isNotEmpty == true)
                                               ? 'Google: ${_linkedCalendarSummary!}'
                                               : 'Google linked')
                                           : 'Import Google Calendar',
@@ -1412,12 +1435,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                 children: [
                                   chips,
                                   const SizedBox(height: 10),
-                                  if (_canEdit)
-                                    Wrap(
-                                      spacing: 8,
-                                      runSpacing: 8,
-                                      children: [googleBtn(), addBtn()],
-                                    ),
+                                  if (_canEdit) Wrap(spacing: 8, runSpacing: 8, children: [googleBtn(), addBtn()]),
                                 ],
                               );
                             } else {
@@ -1425,11 +1443,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                                 children: [
                                   Expanded(child: chips),
                                   const SizedBox(width: 8),
-                                  if (_canEdit) ...[
-                                    googleBtn(),
-                                    const SizedBox(width: 8),
-                                    addBtn(),
-                                  ],
+                                  if (_canEdit) ...[googleBtn(), const SizedBox(width: 8), addBtn()],
                                 ],
                               );
                             }
@@ -1442,10 +1456,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                               : 'Your schedule for ${DateFormat('MMMM yyyy').format(_focusedDay)}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: cs.primary,
-                          ),
+                          style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, color: cs.primary),
                         ),
                       ],
                     ),
@@ -1459,17 +1470,19 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                     const Center(child: Text('Failed to load events.'))
                   else ...[
                     if (_agendaView == _AgendaView.day)
-                      Builder(builder: (_) {
-                        final dayEvents = eventsForDay(_selectedDay);
-                        if (dayEvents.isEmpty) return const Center(child: Text('No events found.'));
-                        return ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          padding: const EdgeInsets.only(top: 8),
-                          itemCount: dayEvents.length,
-                          itemBuilder: (context, index) => buildEventCard(dayEvents[index]),
-                        );
-                      })
+                      Builder(
+                        builder: (_) {
+                          final dayEvents = eventsForDay(_selectedDay);
+                          if (dayEvents.isEmpty) return const Center(child: Text('No events found.'));
+                          return ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            padding: const EdgeInsets.only(top: 8),
+                            itemCount: dayEvents.length,
+                            itemBuilder: (context, index) => buildEventCard(dayEvents[index]),
+                          );
+                        },
+                      )
                     else
                       buildMonthAgenda(),
                   ],
@@ -1486,15 +1499,16 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
   void _showShareModal(String calendarId) async {
     final calendarDoc = await FirebaseFirestore.instance.collection('calendars').doc(calendarId).get();
     final data = calendarDoc.data();
-    if (data == null ||
-        (!data.containsKey('sharedLinkEdit') && !data.containsKey('sharedLinkView'))) {
+    if (data == null || (!data.containsKey('sharedLinkEdit') && !data.containsKey('sharedLinkView'))) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Unable to generate invite link.')));
       return;
     }
 
     bool allowEdit = data['allowEdit'] ?? false;
-    String editLink = 'https://www.linkupcalendar.app/#/cal/${data['sharedLinkEdit']}';
-    String viewLink = 'https://www.linkupcalendar.app/#/cal/${data['sharedLinkView']}';
+    //String editLink = 'https://www.linkupcalendar.app/#/cal/${data['sharedLinkEdit']}';
+    //String viewLink = 'https://www.linkupcalendar.app/#/cal/${data['sharedLinkView']}';
+    String editLink = 'localhost:5000/#/cal/${data['sharedLinkEdit']}';
+    String viewLink = 'localhost:5000/#/cal/${data['sharedLinkView']}';
 
     final TextEditingController linkController = TextEditingController(text: allowEdit ? editLink : viewLink);
 
@@ -1511,8 +1525,8 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                   TextField(
                     controller: linkController,
                     readOnly: true,
-                    onTap: () => linkController.selection = TextSelection(
-                      baseOffset: 0, extentOffset: linkController.text.length),
+                    onTap: () => linkController.selection =
+                        TextSelection(baseOffset: 0, extentOffset: linkController.text.length),
                     decoration: InputDecoration(
                       labelText: 'Invite Link',
                       suffixIcon: IconButton(
@@ -1595,20 +1609,14 @@ class _GoogleActionTileState extends State<_GoogleActionTile> {
 
     final fg = disabled ? cs.outline : (_hover ? accent : baseFg);
     final bg = _hover
-        ? (widget.destructive
-            ? Colors.red.withOpacity(isDark ? 0.14 : 0.10)
-            : cs.primary.withOpacity(isDark ? 0.12 : 0.08))
+        ? (widget.destructive ? Colors.red.withOpacity(isDark ? 0.14 : 0.10) : cs.primary.withOpacity(isDark ? 0.12 : 0.08))
         : Colors.transparent;
-    final border = _hover
-        ? accent.withOpacity(isDark ? 0.50 : 0.60)
-        : Colors.transparent;
+    final border = _hover ? accent.withOpacity(isDark ? 0.50 : 0.60) : Colors.transparent;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      cursor: widget.onTap != null
-          ? SystemMouseCursors.click
-          : SystemMouseCursors.basic,
+      cursor: widget.onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOut,
@@ -1621,8 +1629,7 @@ class _GoogleActionTileState extends State<_GoogleActionTile> {
           dense: true,
           visualDensity: VisualDensity.compact,
           leading: Icon(widget.icon, color: fg),
-          title: Text(widget.text,
-              style: TextStyle(color: fg, fontWeight: FontWeight.w500)),
+          title: Text(widget.text, style: TextStyle(color: fg, fontWeight: FontWeight.w500)),
           onTap: widget.onTap,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
@@ -1700,9 +1707,7 @@ class _PreviewSelectSheetState extends State<_PreviewSelectSheet> {
     final df = DateFormat('dd MMM yyyy');
     final tf = DateFormat('HH:mm');
     final sameDay = s.year == e.year && s.month == e.month && s.day == e.day;
-    return sameDay
-        ? '${df.format(s)}  ${tf.format(s)}–${tf.format(e)}'
-        : '${df.format(s)} ${tf.format(s)} → ${df.format(e)} ${tf.format(e)}';
+    return sameDay ? '${df.format(s)}  ${tf.format(s)}–${tf.format(e)}' : '${df.format(s)} ${tf.format(s)} → ${df.format(e)} ${tf.format(e)}';
   }
 
   @override
@@ -1742,21 +1747,13 @@ class _PreviewSelectSheetState extends State<_PreviewSelectSheet> {
             const SizedBox(height: 12),
             Row(
               children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(null),
-                    child: const Text('Cancel'),
-                  ),
-                ),
+                Expanded(child: OutlinedButton(onPressed: () => Navigator.of(context).pop(null), child: const Text('Cancel'))),
                 const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.download),
                     label: Text('Import (${_selected.length})'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: cs.primary,
-                      foregroundColor: cs.onPrimary,
-                    ),
+                    style: ElevatedButton.styleFrom(backgroundColor: cs.primary, foregroundColor: cs.onPrimary),
                     onPressed: _selected.isEmpty
                         ? null
                         : () {

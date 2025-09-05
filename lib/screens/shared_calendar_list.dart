@@ -43,45 +43,61 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
   }
 
   Future<List<Map<String, dynamic>>> _fetchJoinedCalendars() async {
-    final uid = _uid!;
-    final col = FirebaseFirestore.instance.collection('calendars');
+  final uid = _uid!;
+  final col = FirebaseFirestore.instance.collection('calendars');
 
-    final byMemberIds = await col
-        .where('isShared', isEqualTo: true)
-        .where('memberIds', arrayContains: uid)
-        .get();
+  // Prefer fast path via memberIds
+  final byMemberIds = await col
+      .where('isShared', isEqualTo: true)
+      .where('memberIds', arrayContains: uid)
+      .get();
 
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs = byMemberIds.docs;
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> docs = byMemberIds.docs;
 
-    if (docs.isEmpty) {
-      final allShared = await col.where('isShared', isEqualTo: true).get();
-      docs = allShared.docs.where((d) {
-        final raw = d.data()['members'] ?? [];
-        final members = (raw as List)
-            .map<String>((m) {
-              if (m is String) return m;
-              if (m is Map && m['id'] != null) return m['id'].toString();
-              return '';
-            })
-            .where((e) => e.isNotEmpty)
-            .toList();
-        return members.contains(uid);
-      }).toList();
-    }
-
-    return docs.map((doc) {
-      final data = doc.data();
-      final ts = data['lastUpdatedAt'] as Timestamp?;
-      return {
-        'id': doc.id,
-        'name': (data['name'] ?? 'Untitled') as String,
-        'lastUpdatedAt': ts,
-        'updatedByName': (data['updatedByName'] ?? 'Unknown') as String,
-        'updatedBy': (data['updatedBy'] ?? '') as String,
-        'ownerId': (data['owner'] ?? '') as String,
-      };
+  // Fallback for older docs that only have "members"
+  if (docs.isEmpty) {
+    final allShared = await col.where('isShared', isEqualTo: true).get();
+    docs = allShared.docs.where((d) {
+      final raw = d.data()['members'] ?? [];
+      final members = (raw as List)
+          .map<String>((m) {
+            if (m is String) return m;
+            if (m is Map && m['id'] != null) return m['id'].toString();
+            return '';
+          })
+          .where((e) => e.isNotEmpty)
+          .toList();
+      return members.contains(uid);
     }).toList();
   }
+
+  return docs.map((doc) {
+    final data = doc.data();
+    final ts = data['lastUpdatedAt'] as Timestamp?;
+
+    // Robust owner resolution: supports string "owner" or legacy {id,name}
+    final ownerField = data['owner'];
+    final resolvedOwnerId = ownerField is String
+        ? ownerField
+        : (ownerField is Map && ownerField['id'] != null)
+            ? ownerField['id'].toString()
+            : '';
+    final resolvedOwnerName = (data['ownerName'] ??
+            (ownerField is Map ? (ownerField['name'] ?? '') : ''))
+        .toString();
+
+    return {
+      'id': doc.id,
+      'name': (data['name'] ?? 'Untitled') as String,
+      'lastUpdatedAt': ts,
+      'updatedByName': (data['updatedByName'] ?? 'Unknown') as String,
+      'updatedBy': (data['updatedBy'] ?? '') as String,
+      'ownerId': resolvedOwnerId,
+      'ownerName': resolvedOwnerName,
+    };
+  }).toList();
+}
+
 
   Future<void> _confirmAndDeleteCalendar(
     BuildContext context,
@@ -157,6 +173,29 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
 
     await db.collection('calendars').doc(calendarId).delete();
   }
+
+  String _subtitleForCalendar(Map<String, dynamic> calendar) {
+    final ts = calendar['lastUpdatedAt'] as Timestamp?;
+    final when = ts != null ? DateFormat('MMM d • hh:mm a').format(ts.toDate()) : 'N/A';
+
+    final updatedByUid   = (calendar['updatedBy'] as String?) ?? '';
+    final updatedByName  = (calendar['updatedByName'] as String?)?.trim() ?? '';
+    final ownerId        = (calendar['ownerId'] as String?) ?? '';
+    final ownerName      = (calendar['ownerName'] as String?)?.trim() ?? '';
+
+    final isOwnerUpdate  = updatedByUid.isNotEmpty && updatedByUid == ownerId;
+
+    // Prefer a real name; if missing and the updater is the owner, fall back to ownerName.
+    final baseName = updatedByName.isNotEmpty
+        ? updatedByName
+        : (isOwnerUpdate && ownerName.isNotEmpty ? ownerName : 'Unknown');
+
+    final byPart = isOwnerUpdate ? '$baseName (Owner)' : baseName;
+
+    return 'Updated $when by $byPart';
+  }
+
+
 
   Future<void> _confirmAndLeaveCalendar(
     BuildContext context,
@@ -348,14 +387,12 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
                   itemCount: calendars.length,
                   itemBuilder: (context, index) {
                     final calendar = calendars[index];
-                    final ts = calendar['lastUpdatedAt'] as Timestamp?;
-                    final when = ts != null ? DateFormat('MMM d • hh:mm a').format(ts.toDate()) : 'N/A';
-                    final updatedBy = (calendar['updatedByName'] ?? 'Unknown') as String;
+                    //final ts = calendar['lastUpdatedAt'] as Timestamp?;
 
                     final ownerId = (calendar['ownerId'] as String? ?? '');
                     final isOwnerView = _uid == ownerId;
 
-                    final subtitleText = 'Updated $when by $updatedBy${isOwnerView ? ' • Owner' : ''}';
+                    final subtitleText = _subtitleForCalendar(calendar);
 
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),

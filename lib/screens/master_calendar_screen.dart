@@ -327,11 +327,18 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
         final data = eventDoc.data();
 
         if (isShared) {
-          final src = (data['source'] ?? '').toString();
-          final creatorId = (data['creatorId'] ?? '').toString();
-          if (src == 'google') continue; // ignore Google in shared
-          if (creatorId.isNotEmpty && creatorId != user.uid) continue; // only mine
-        }
+          final src = (data['source'] ?? '').toString(); // 'google' for google-imported
+          final creatorId = (data['creatorId'] ?? data['createdById'] ?? '').toString();
+
+            // ❌ Hide my own Google-imported events from shared calendars
+            if (src == 'google' && creatorId == user.uid) continue;
+
+            // ✅ Show my manual events in shared calendars
+            // (i.e., do nothing here; let them pass through)
+
+            // ✅ Show friend's Google events (and manual) by default
+          }
+
 
         final Timestamp? st = data['startTime'] as Timestamp?;
         final Timestamp? et = data['endTime'] as Timestamp?;
