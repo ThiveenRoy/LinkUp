@@ -130,8 +130,11 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
       await _deleteCalendarAndEvents(calendarId);
 
       final refreshed = _fetchJoinedCalendars();
-      if (!mounted) return;
-      setState(() => _futureCalendars = refreshed);
+        if (!mounted) return;
+        setState(() {
+          _futureCalendars = refreshed;
+        });
+
 
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Calendar deleted')));
     } catch (e) {
@@ -231,9 +234,10 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
       await _leaveCalendar(calendarId, uid);
 
       final refreshed = _fetchJoinedCalendars();
-      if (!mounted) return;
-      setState(() => _futureCalendars = refreshed);
-
+        if (!mounted) return;
+        setState(() {
+          _futureCalendars = refreshed;
+        });
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('You left this calendar')));
     } catch (e) {
       if (!mounted) return;

@@ -75,7 +75,8 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
   @override
   void didUpdateWidget(CalendarHomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.calendarId != oldWidget.calendarId && widget.calendarId != null) {
+    if (widget.calendarId != oldWidget.calendarId &&
+        widget.calendarId != null) {
       _tabController.index = 1;
     }
     if (widget.tabIndex != oldWidget.tabIndex) {
@@ -103,61 +104,76 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
   // ---------------- Settings ----------------
 
   void _openSettings() {
-  final t = widget.theme;
+    final t = widget.theme;
 
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (_) => SettingsScreen(
-        // values
-        themeMode: t.themeMode,
-        accentColor: t.seedColor,
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder:
+            (_) => SettingsScreen(
+              // values
+              themeMode: t.themeMode,
+              accentColor: t.seedColor,
 
-        // callbacks
-        onThemeModeChanged: (m) {
-          switch (m) {
-            case ThemeMode.light:  t.setMode(ThemeModePref.light);  break;
-            case ThemeMode.dark:   t.setMode(ThemeModePref.dark);   break;
-            case ThemeMode.system: t.setMode(ThemeModePref.system); break;
-          }
-        },
-        onAccentChanged: t.setSeedColor,
+              // callbacks
+              onThemeModeChanged: (m) {
+                switch (m) {
+                  case ThemeMode.light:
+                    t.setMode(ThemeModePref.light);
+                    break;
+                  case ThemeMode.dark:
+                    t.setMode(ThemeModePref.dark);
+                    break;
+                  case ThemeMode.system:
+                    t.setMode(ThemeModePref.system);
+                    break;
+                }
+              },
+              onAccentChanged: t.setSeedColor,
 
-        // about
-        appName: 'LinkUp Calendar',
-        appVersion: 'v1.0.2',
-        createdBy: 'Thiveen Roy',
+              // about
+              appName: 'LinkUp Calendar',
+              appVersion: 'v1.0.0',
+              createdBy: 'Thiveen Roy',
+            ),
       ),
-    ),
-  );
+    );
+  }
+
+  String _themedAsset(BuildContext context, String path) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  if (!isDark) return path;
+  final i = path.lastIndexOf('.');
+  if (i <= 0) return path;
+  return '${path.substring(0, i)}_dark${path.substring(i)}';
 }
 
   /// Picks an image and saves it to ThemeController:
   /// - Web: stores bytes (SharedPreferences base64).
   /// - Mobile/Desktop: stores absolute file path.
   Future<void> _pickAndApplyWallpaper(ThemeController t) async {
-  try {
-    if (kIsWeb) {
-      // No plugin on web
-      final bytes = await pickWallpaperBytesWeb();
-      if (bytes == null) return;
-      await t.setWallpaperBytes(bytes);
-      return;
-    }
+    try {
+      if (kIsWeb) {
+        // No plugin on web
+        final bytes = await pickWallpaperBytesWeb();
+        if (bytes == null) return;
+        await t.setWallpaperBytes(bytes);
+        return;
+      }
 
-    // Mobile / Desktop: file path via file_picker
-    final res = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-    );
-    if (res == null || res.files.single.path == null) return;
-    await t.setWallpaperPath(res.files.single.path);
-  } catch (e) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Failed to load wallpaper: $e')),
-    );
+      // Mobile / Desktop: file path via file_picker
+      final res = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+      );
+      if (res == null || res.files.single.path == null) return;
+      await t.setWallpaperPath(res.files.single.path);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to load wallpaper: $e')));
+    }
   }
-}
 
   // ---------------- UI ----------------
 
@@ -171,7 +187,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
       elevation: 1,
       title: Row(
         children: [
-          Image.asset('assets/logo_final.png', height: 30),
+           Image.asset(_themedAsset(context, 'assets/logo_final.png'), height: 30),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -200,7 +216,10 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
           icon: const Icon(Icons.logout, color: Colors.redAccent),
           label: const Text(
             'Logout',
-            style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              color: Colors.redAccent,
+              fontWeight: FontWeight.bold,
+            ),
           ),
           onPressed: () => _logout(context),
         ),
@@ -216,7 +235,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
           Tab(icon: Icon(Icons.group), text: 'Shared Calendar'),
         ],
       ),
-    );
+    ); 
 
     final mobileTopBar = SafeArea(
       bottom: false,
@@ -225,7 +244,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
         color: Theme.of(context).colorScheme.surface,
         child: Row(
           children: [
-            Image.asset('assets/logo_final.png', height: 24),
+            Image.asset(_themedAsset(context, 'assets/logo_final.png'), height: 24),
             const SizedBox(width: 8),
             const Expanded(
               child: Text(
@@ -245,10 +264,11 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
                 if (v == 'logout') _logout(context);
                 if (v == 'settings') _openSettings();
               },
-              itemBuilder: (ctx) => const [
-                PopupMenuItem(value: 'settings', child: Text('Settings')),
-                PopupMenuItem(value: 'logout', child: Text('Logout')),
-              ],
+              itemBuilder:
+                  (ctx) => const [
+                    PopupMenuItem(value: 'settings', child: Text('Settings')),
+                    PopupMenuItem(value: 'logout', child: Text('Logout')),
+                  ],
             ),
           ],
         ),
@@ -259,14 +279,26 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
       selectedIndex: _tabController.index,
       destinations: const [
         NavigationDestination(
-            icon: Icon(Icons.calendar_today), label: 'Master Calendar'),
-        NavigationDestination(icon: Icon(Icons.group), label: 'Shared Calendar'),
+          icon: Icon(Icons.calendar_today),
+          label: 'Master Calendar',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.group),
+          label: 'Shared Calendar',
+        ),
       ],
       onDestinationSelected: (i) {
         _tabController.index = i;
         setState(() {});
       },
     );
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    // Pick container/foreground that adapt to light/dark + Material 3
+    final bg = scheme.secondaryContainer;
+    final fg = scheme.onSecondaryContainer;
+    final accent = scheme.secondary; // for the bulb icon
 
     return WillPopScope(
       onWillPop: () async {
@@ -285,23 +317,31 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
             if (_showTutorialCard)
               Card(
                 margin: const EdgeInsets.all(16),
-                color: Colors.amber[100],
+                color: bg,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.lightbulb_outline, color: Colors.orange),
+                      Icon(Icons.lightbulb, color: accent),
                       const SizedBox(width: 12),
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           'Welcome! Use the "+" button to add events.\nSwitch tabs to manage calendars.',
-                          style: TextStyle(fontSize: 14),
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: fg,
+                          ),
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () =>
-                            setState(() => _showTutorialCard = false),
+                        tooltip: 'Dismiss',
+                        icon: Icon(Icons.close, color: fg.withOpacity(0.8)),
+                        onPressed:
+                            () => setState(() => _showTutorialCard = false),
                       ),
                     ],
                   ),
@@ -394,9 +434,6 @@ class _SharedCalendarTabState extends State<SharedCalendarTab> {
         onBackToList: _goBackToList,
       );
     }
-    return SharedCalendarList(
-      onSelect: _openCalendar,
-      theme: widget.theme,
-    );
+    return SharedCalendarList(onSelect: _openCalendar, theme: widget.theme);
   }
 }

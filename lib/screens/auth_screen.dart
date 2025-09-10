@@ -28,15 +28,22 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   bool isLogin = false;
   String? error;
 
+  // ---------- helper: themed asset (adds _dark before extension in dark mode) ----------
+  String _themedAsset(BuildContext context, String path) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    if (!isDark) return path;
+    final dot = path.lastIndexOf('.');
+    if (dot <= 0) return path;
+    return '${path.substring(0, dot)}_dark${path.substring(dot)}';
+  }
+
   /// 🔍 Check Firestore for seenTutorial flag
   Future<bool> _getServerSeenTutorialIfAny() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return false;
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
+      final snap =
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       return (snap.data()?['seenTutorial'] == true);
     } catch (_) {
       return false;
@@ -156,8 +163,8 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
           justSignedUp = true;
         } on FirebaseAuthException catch (e) {
           if (e.code == 'email-already-in-use') {
-            final methods = await FirebaseAuth.instance
-                .fetchSignInMethodsForEmail(email);
+            final methods =
+                await FirebaseAuth.instance.fetchSignInMethodsForEmail(email);
             final msg = methods.contains('google.com')
                 ? "This email is registered via Google. Use Google Sign-In."
                 : "Email already in use. Try Google Sign-In.";
@@ -212,7 +219,10 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
 
   /// Google sign-in (links if a legacy anonymous session somehow exists)
   Future<void> _signInWithGoogle() async {
-    setState(() { isLoading = true; error = null; });
+    setState(() {
+      isLoading = true;
+      error = null;
+    });
     try {
       final auth = FirebaseAuth.instance;
       final account = await GoogleSignIn().signIn();
@@ -269,9 +279,10 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
                 Expanded(child: _buildFormLayout()),
                 Expanded(
                   child: Container(
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       image: DecorationImage(
-                        image: AssetImage('assets/bg_login.png'),
+                        image:
+                        AssetImage('assets/bg_login.png'),
                         fit: BoxFit.cover,
                       ),
                     ),
@@ -291,7 +302,11 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Image.asset('assets/logo_final.png', height: 170),
+              // 🔄 uses logo_final_dark.png automatically in dark theme
+              Image.asset(
+                _themedAsset(context, 'assets/logo_final.png'),
+                height: 170,
+              ),
               const SizedBox(height: 32),
               _buildLoginForm(),
             ],
@@ -302,7 +317,10 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   }
 
   Widget _buildLoginForm() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
     return Form(
       key: _formKey,
       child: Column(
@@ -310,7 +328,10 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
         children: [
           Text(
             isLogin ? 'Welcome Back' : 'Let’s Get Started',
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ) ??
+                const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
@@ -319,6 +340,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
                 ? 'Login to continue using Link Up Calendar.'
                 : 'Create your account to start collaborating.',
             textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 24),
           if (error != null)
@@ -369,26 +391,28 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
                 value == null || value.length < 6 ? 'Minimum 6 characters' : null,
           ),
           const SizedBox(height: 24),
+
+          // Buttons styled from theme for better dark-mode contrast
           ElevatedButton(
             onPressed: isLoading ? null : _loginOrSignUp,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFCBDCEB),
-              foregroundColor: Colors.black87,
+              backgroundColor: cs.primary,
+              foregroundColor: cs.onPrimary,
               padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(24),
               ),
             ),
             child: isLoading
-                ? const CircularProgressIndicator(color: Colors.black)
+                ? CircularProgressIndicator(color: cs.onPrimary)
                 : Text(isLogin ? 'Login' : 'Sign Up'),
           ),
           const SizedBox(height: 12),
           ElevatedButton(
             onPressed: isLoading ? null : _signInWithGoogle,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFCBDCEB),
-              foregroundColor: Colors.black87,
+              backgroundColor: cs.secondaryContainer,
+              foregroundColor: cs.onSecondaryContainer,
               padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(24),
@@ -404,10 +428,9 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          
+
           TextButton(
             style: TextButton.styleFrom(
-              // label & icon color for normal/pressed/hover states
               foregroundColor: isDark ? Colors.white : Colors.black,
             ),
             onPressed: () => setState(() => isLogin = !isLogin),
@@ -417,7 +440,6 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
                   : "Already have an account? Login",
             ),
           ),
-          // ➖ Removed: guest divider + Continue as Guest UI
         ],
       ),
     );

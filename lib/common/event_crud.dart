@@ -3,14 +3,50 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-// ⬇️ make sure the path matches where you placed glass.dart
 import '../widgets/glass.dart';
 
 class EventCrud {
-  /// Shared Add/Edit dialog with validation.
-  /// - Pass `initialSelectedDay` so "Add Event" opens on the calendar's selected day.
-  /// - For shared calendars on ADD, pass `creatorId` / `creatorName`.
-  /// - If you want audit metadata on EDIT, pass `updatedById` / `updatedByName`.
+  /// Format a single day's time label for an event (use in your day agenda tiles)
+  /// - Single-day timed:      "5:00 AM – 5:00 PM"
+  /// - Multi-day (start):     "5:00 AM – All-day"
+  /// - Multi-day (middle):    "All-day"
+  /// - Multi-day (end):       "All-day – 5:00 PM"
+  /// - True all-day:          "All-day"
+    static String timeLabelForDay(Map<String, dynamic> event, DateTime day) {
+    final tsStart = event['startTime'] as Timestamp?;
+    final tsEnd   = event['endTime'] as Timestamp?;
+    if (tsStart == null || tsEnd == null) return '';
+
+    final start = tsStart.toDate();
+    final end   = tsEnd.toDate();
+    final allDay = (event['allDay'] ?? event['isAllDay'] ?? false) == true;
+
+    final day0   = DateTime(day.year, day.month, day.day);
+    final s0     = DateTime(start.year, start.month, start.day);
+    final e0     = DateTime(end.year, end.month, end.day);
+    final sameDay = s0.year == e0.year && s0.month == e0.month && s0.day == e0.day;
+
+    final tf = DateFormat('h:mm a');
+
+    // True all-day events
+    if (allDay) return 'All-day';
+
+    // Timed, single-day
+    if (sameDay) return '${tf.format(start)} – ${tf.format(end)}';
+
+    // Timed, multi-day (per-day label)
+    final isStartDay = day0.year == s0.year && day0.month == s0.month && day0.day == s0.day;
+    final isEndDay   = day0.year == e0.year && day0.month == e0.month && day0.day == e0.day;
+
+    if (isStartDay) return 'Starts ${tf.format(start)}';
+    if (isEndDay)   return 'Until ${tf.format(end)}';
+
+    // Middle days
+    return 'All-day (ongoing)';
+  }
+
+
+  /// Shared Add/Edit dialog with validation + All-day support.
   static Future<void> showAddOrEditDialog({
     required BuildContext context,
     required Future<CollectionReference<Map<String, dynamic>>> Function()
@@ -38,7 +74,7 @@ class EventCrud {
     final Color _button = buttonColor ?? cs.primary;
     final Color _text = textDark ?? cs.onSurface;
 
-    // denser fills on compact to keep text readable over glass
+    // field fills on glass
     final fieldFill = cs.surfaceVariant.withOpacity(
       isCompact ? (isDark ? 0.30 : 0.45) : (isDark ? 0.18 : 0.30),
     );
@@ -50,12 +86,22 @@ class EventCrud {
     final DateTime seed = initialSelectedDay ?? today0;
     final DateTime seed0 = DateTime(seed.year, seed.month, seed.day);
 
+    bool _allDay = (existingEvent?['allDay'] ?? false) == true;
+
     DateTime selectedStart =
         (existingEvent?['startTime'] as Timestamp?)?.toDate() ??
-            DateTime(seed0.year, seed0.month, seed0.day, 0, 0);
+            DateTime(seed0.year, seed0.month, seed0.day, 9, 0);
     DateTime selectedEnd =
         (existingEvent?['endTime'] as Timestamp?)?.toDate() ??
-            DateTime(seed0.year, seed0.month, seed0.day, 0, 0);
+            DateTime(seed0.year, seed0.month, seed0.day, 17, 0);
+
+    // Normalize when editing an all-day event
+    if (_allDay) {
+      selectedStart = DateTime(selectedStart.year, selectedStart.month,
+          selectedStart.day, 0, 0, 0);
+      selectedEnd = DateTime(selectedEnd.year, selectedEnd.month,
+          selectedEnd.day, 23, 59, 59);
+    }
 
     final titleController = TextEditingController(
       text: existingEvent?['title'] ?? '',
@@ -63,9 +109,8 @@ class EventCrud {
     final descriptionController = TextEditingController(
       text: existingEvent?['description'] ?? '',
     );
-    final labelColor = isDark ? cs.onSurface : Colors.black; // “Start”, “End”
-    final valueColor =
-        isDark ? cs.onSurface : Colors.black; // 02-09-2025, 12:00 AM
+    final labelColor = isDark ? cs.onSurface : Colors.black;
+    final valueColor = isDark ? cs.onSurface : Colors.black;
 
     await showDialog(
       context: context,
@@ -75,13 +120,8 @@ class EventCrud {
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
           Future<void> pickDate({required bool isStart}) async {
-            final DateTime today0 = DateTime.now().copyWith(
-              hour: 0,
-              minute: 0,
-              second: 0,
-              millisecond: 0,
-              microsecond: 0,
-            );
+            final DateTime t = DateTime.now();
+            final DateTime today0 = DateTime(t.year, t.month, t.day);
 
             final DateTime floor = isStart
                 ? today0
@@ -137,11 +177,20 @@ class EventCrud {
                     selectedEnd.minute,
                   );
                 }
+
+                if (_allDay) {
+                  // keep bounds when all-day
+                  selectedStart = DateTime(
+                      selectedStart.year, selectedStart.month, selectedStart.day, 0, 0, 0);
+                  selectedEnd = DateTime(
+                      selectedEnd.year, selectedEnd.month, selectedEnd.day, 23, 59, 59);
+                }
               });
             }
           }
 
           Future<void> pickTime({required bool isStart}) async {
+            if (_allDay) return; // disabled for all-day
             final picked = await showTimePicker(
               context: context,
               initialTime: TimeOfDay.fromDateTime(
@@ -150,7 +199,6 @@ class EventCrud {
               builder: (ctx, child) => Theme(
                 data: theme.copyWith(
                   timePickerTheme: TimePickerThemeData(
-                    // AM/PM pill
                     dayPeriodColor: MaterialStateColor.resolveWith((states) {
                       final selected = states.contains(MaterialState.selected);
                       return selected
@@ -168,7 +216,6 @@ class EventCrud {
                       borderRadius: BorderRadius.circular(8),
                       side: BorderSide(color: cs.outlineVariant),
                     ),
-                    // hour/minute chip
                     hourMinuteColor: MaterialStateColor.resolveWith((states) {
                       return states.contains(MaterialState.selected)
                           ? cs.primary
@@ -246,21 +293,44 @@ class EventCrud {
               return;
             }
 
-            if (!selectedEnd.isAfter(selectedStart)) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('End time must be after start time.'),
-                ),
-              );
-              return;
+            if (_allDay) {
+              if (endDay0.isBefore(startDay0)) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('End date must be on or after start date.'),
+                  ),
+                );
+                return;
+              }
+            } else {
+              if (!selectedEnd.isAfter(selectedStart)) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('End time must be after start time.'),
+                  ),
+                );
+                return;
+              }
             }
+
+            // Normalize times for write
+            final startToWrite = _allDay
+                ? DateTime(
+                    startDay0.year, startDay0.month, startDay0.day, 0, 0, 0)
+                : selectedStart;
+
+            final endToWrite = _allDay
+                ? DateTime(
+                    endDay0.year, endDay0.month, endDay0.day, 23, 59, 59)
+                : selectedEnd;
 
             final col = await getEventsCollection();
             final payload = <String, dynamic>{
               'title': title,
               'description': description,
-              'startTime': Timestamp.fromDate(selectedStart),
-              'endTime': Timestamp.fromDate(selectedEnd),
+              'startTime': Timestamp.fromDate(startToWrite),
+              'endTime': Timestamp.fromDate(endToWrite),
+              'allDay': _allDay,
               'lastUpdated': FieldValue.serverTimestamp(),
             };
 
@@ -330,7 +400,7 @@ class EventCrud {
                         ),
                       ),
 
-                      // Fields
+                      // Title field
                       TextField(
                         controller: titleController,
                         style: TextStyle(color: cs.onSurface),
@@ -355,6 +425,7 @@ class EventCrud {
                       ),
                       const SizedBox(height: 12),
 
+                      // Description
                       TextField(
                         controller: descriptionController,
                         style: TextStyle(color: cs.onSurface),
@@ -381,6 +452,35 @@ class EventCrud {
                       ),
                       const SizedBox(height: 16),
 
+                      // All-day toggle
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text('All day',
+                            style: tt.labelLarge?.copyWith(color: cs.onSurface)),
+                        value: _allDay,
+                        onChanged: (v) => setModalState(() {
+                          _allDay = v;
+                          if (v) {
+                            selectedStart = DateTime(selectedStart.year,
+                                selectedStart.month, selectedStart.day, 0, 0, 0);
+                            selectedEnd = DateTime(selectedEnd.year,
+                                selectedEnd.month, selectedEnd.day, 23, 59, 59);
+                          } else {
+                            if (selectedStart.hour == 0 &&
+                                selectedStart.minute == 0) {
+                              selectedStart = DateTime(selectedStart.year,
+                                  selectedStart.month, selectedStart.day, 9, 0);
+                            }
+                            if (selectedEnd.hour == 23 &&
+                                selectedEnd.minute >= 59) {
+                              selectedEnd = DateTime(selectedEnd.year,
+                                  selectedEnd.month, selectedEnd.day, 17, 0);
+                            }
+                          }
+                        }),
+                      ),
+                      const SizedBox(height: 8),
+
                       // Start
                       Text(
                         "Start",
@@ -399,15 +499,22 @@ class EventCrud {
                         trailing: Icon(Icons.calendar_today, color: _button),
                         onTap: () => pickDate(isStart: true),
                       ),
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(
-                          DateFormat('hh:mm a').format(selectedStart),
-                          style: TextStyle(color: valueColor),
+                      IgnorePointer(
+                        ignoring: _allDay,
+                        child: Opacity(
+                          opacity: _allDay ? 0.4 : 1.0,
+                          child: ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              DateFormat('hh:mm a').format(selectedStart),
+                              style: TextStyle(color: valueColor),
+                            ),
+                            trailing:
+                                Icon(Icons.access_time, color: _button),
+                            onTap: () => pickTime(isStart: true),
+                          ),
                         ),
-                        trailing: Icon(Icons.access_time, color: _button),
-                        onTap: () => pickTime(isStart: true),
                       ),
                       const SizedBox(height: 12),
 
@@ -429,15 +536,22 @@ class EventCrud {
                         trailing: Icon(Icons.calendar_today, color: _button),
                         onTap: () => pickDate(isStart: false),
                       ),
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(
-                          DateFormat('hh:mm a').format(selectedEnd),
-                          style: TextStyle(color: valueColor),
+                      IgnorePointer(
+                        ignoring: _allDay,
+                        child: Opacity(
+                          opacity: _allDay ? 0.4 : 1.0,
+                          child: ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              DateFormat('hh:mm a').format(selectedEnd),
+                              style: TextStyle(color: valueColor),
+                            ),
+                            trailing:
+                                Icon(Icons.access_time, color: _button),
+                            onTap: () => pickTime(isStart: false),
+                          ),
                         ),
-                        trailing: Icon(Icons.access_time, color: _button),
-                        onTap: () => pickTime(isStart: false),
                       ),
 
                       const SizedBox(height: 8),
@@ -461,7 +575,8 @@ class EventCrud {
                               ),
                               elevation: 0,
                             ),
-                            child: Text(existingEvent == null ? 'Add' : 'Save'),
+                            child: Text(
+                                existingEvent == null ? 'Add' : 'Save'),
                           ),
                         ],
                       ),
@@ -494,7 +609,8 @@ class EventCrud {
       builder: (context) => Dialog(
         elevation: 0,
         backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        insetPadding:
+            const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         child: GlassPanel(
           radius: const BorderRadius.all(Radius.circular(16)),
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
@@ -561,9 +677,7 @@ class EventCrud {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Tiny chooser when tapping "Add Event" (manual vs Google)
-  // ---------------------------------------------------------------------------
+  // Small chooser when tapping "Add Event"
   static Future<void> showAddMenuWithGoogle({
     required BuildContext context,
     required Future<CollectionReference<Map<String, dynamic>>> Function()

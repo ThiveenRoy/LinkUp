@@ -114,6 +114,14 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     );
   }
 
+  void _goToToday() {
+    final now = DateTime.now();
+    setState(() {
+      _focusedDay = DateTime(now.year, now.month, now.day);
+      _selectedDay = _focusedDay;
+    });
+  }
+
   Future<T> _withLoading<T>({
     required String message,
     required Future<T> Function() task,
@@ -123,26 +131,33 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => Dialog(
-        elevation: 8,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.4)),
-              const SizedBox(width: 12),
-              Flexible(
-                child: Text(
-                  message.isEmpty ? 'Working…' : message,
-                  style: tt.bodyMedium?.copyWith(color: cs.onSurface),
-                ),
+      builder:
+          (_) => Dialog(
+            elevation: 8,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2.4),
+                  ),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: Text(
+                      message.isEmpty ? 'Working…' : message,
+                      style: tt.bodyMedium?.copyWith(color: cs.onSurface),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
     );
     try {
       final res = await task();
@@ -156,19 +171,27 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final ts1 = (m['startTime'] as Timestamp?)?.toDate();
     final ts2 = (m['endTime'] as Timestamp?)?.toDate();
     final iCal = (m['iCalUID'] ?? '') as String;
-    final gid  = (m['googleEventId'] ?? '') as String;
+    final gid = (m['googleEventId'] ?? '') as String;
     final title = (m['title'] ?? '') as String;
     return '$iCal|$gid|$title|$ts1|$ts2';
   }
+
   String _keyForMapped(Map<String, dynamic> m) => _keyForLocal(m);
 
   ({DateTime from, DateTime to}) _syncWindow() {
     final now = DateTime.now();
-    return (from: DateTime(now.year, now.month - 6, now.day),
-            to:   DateTime(now.year + 1, now.month, now.day));
+    return (
+      from: DateTime(now.year, now.month - 6, now.day),
+      to: DateTime(now.year + 1, now.month, now.day),
+    );
   }
 
-  String _formatEventTime(DateTime? selectedDate, DateTime? start, DateTime? end) {
+  // (kept for other usages; cards now use EventCrud.timeLabelForDay)
+  String _formatEventTime(
+    DateTime? selectedDate,
+    DateTime? start,
+    DateTime? end,
+  ) {
     if (start == null || end == null || selectedDate == null) return '';
     final sd = DateFormat('d MMM yyyy').format(selectedDate);
     final st = DateFormat('h:mm a').format(start);
@@ -181,18 +204,21 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    final q = await FirebaseFirestore.instance
-        .collection('calendars')
-        .where('owner', isEqualTo: user.uid)
-        .where('isShared', isEqualTo: false)
-        .limit(1)
-        .get();
+    final q =
+        await FirebaseFirestore.instance
+            .collection('calendars')
+            .where('owner', isEqualTo: user.uid)
+            .where('isShared', isEqualTo: false)
+            .limit(1)
+            .get();
 
     if (q.docs.isEmpty) {
       final displayName =
           (user.displayName?.trim().isNotEmpty == true)
               ? user.displayName!.trim()
-              : (user.email?.trim().isNotEmpty == true ? user.email!.trim() : 'User');
+              : (user.email?.trim().isNotEmpty == true
+                  ? user.email!.trim()
+                  : 'User');
 
       await FirebaseFirestore.instance.collection('calendars').add({
         'name': 'My Calendar',
@@ -200,7 +226,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
         'ownerName': displayName,
         'ownerEmail': user.email,
         'members': [
-          {'id': user.uid, 'name': displayName}
+          {'id': user.uid, 'name': displayName},
         ],
         'memberIds': [user.uid],
         'isShared': false,
@@ -215,23 +241,25 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   Future<void> _initMasterId() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
-    final q = await FirebaseFirestore.instance
-        .collection('calendars')
-        .where('owner', isEqualTo: user.uid)
-        .where('isShared', isEqualTo: false)
-        .limit(1)
-        .get();
+    final q =
+        await FirebaseFirestore.instance
+            .collection('calendars')
+            .where('owner', isEqualTo: user.uid)
+            .where('isShared', isEqualTo: false)
+            .limit(1)
+            .get();
     if (q.docs.isNotEmpty) _masterCalendarId = q.docs.first.id;
   }
 
   Future<void> _loadGoogleCfg() async {
     if (_masterCalendarId == null) return;
-    final snap = await FirebaseFirestore.instance
-        .collection('calendars')
-        .doc(_masterCalendarId)
-        .collection('integrations')
-        .doc('google')
-        .get();
+    final snap =
+        await FirebaseFirestore.instance
+            .collection('calendars')
+            .doc(_masterCalendarId)
+            .collection('integrations')
+            .doc('google')
+            .get();
 
     final d = snap.data();
     if (!mounted) return;
@@ -245,35 +273,39 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw StateError('Not authenticated');
 
-    final q = await FirebaseFirestore.instance
-        .collection('calendars')
-        .where('owner', isEqualTo: user.uid)
-        .where('isShared', isEqualTo: false)
-        .limit(1)
-        .get();
+    final q =
+        await FirebaseFirestore.instance
+            .collection('calendars')
+            .where('owner', isEqualTo: user.uid)
+            .where('isShared', isEqualTo: false)
+            .limit(1)
+            .get();
 
     String calId;
     if (q.docs.isEmpty) {
       final displayName =
           (user.displayName?.trim().isNotEmpty == true)
               ? user.displayName!.trim()
-              : (user.email?.trim().isNotEmpty == true ? user.email!.trim() : 'User');
+              : (user.email?.trim().isNotEmpty == true
+                  ? user.email!.trim()
+                  : 'User');
 
-      calId = (await FirebaseFirestore.instance.collection('calendars').add({
-        'name': 'My Calendar',
-        'owner': user.uid,
-        'ownerName': displayName,
-        'ownerEmail': user.email,
-        'members': [
-          {'id': user.uid, 'name': displayName}
-        ],
-        'memberIds': [user.uid],
-        'isShared': false,
-        'createdAt': FieldValue.serverTimestamp(),
-        'lastUpdatedAt': FieldValue.serverTimestamp(),
-        'updatedBy': user.uid,
-        'updatedByName': displayName,
-      })).id;
+      calId =
+          (await FirebaseFirestore.instance.collection('calendars').add({
+            'name': 'My Calendar',
+            'owner': user.uid,
+            'ownerName': displayName,
+            'ownerEmail': user.email,
+            'members': [
+              {'id': user.uid, 'name': displayName},
+            ],
+            'memberIds': [user.uid],
+            'isShared': false,
+            'createdAt': FieldValue.serverTimestamp(),
+            'lastUpdatedAt': FieldValue.serverTimestamp(),
+            'updatedBy': user.uid,
+            'updatedByName': displayName,
+          })).id;
     } else {
       calId = q.docs.first.id;
     }
@@ -291,7 +323,8 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    final calendarQuery = await FirebaseFirestore.instance.collection('calendars').get();
+    final calendarQuery =
+        await FirebaseFirestore.instance.collection('calendars').get();
 
     final Map<DateTime, List<Map<String, dynamic>>> tempEvents = {};
     final random = Random();
@@ -305,40 +338,46 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       List<String> memberIds = [];
       final rawMemberIds = doc.data()['memberIds'];
       if (rawMemberIds is List) {
-        memberIds = rawMemberIds.map((e) => e?.toString() ?? '').where((e) => e.isNotEmpty).toList();
+        memberIds =
+            rawMemberIds
+                .map((e) => e?.toString() ?? '')
+                .where((e) => e.isNotEmpty)
+                .toList();
       } else {
         final rawMembers = doc['members'] ?? [];
-        memberIds = (rawMembers as List<dynamic>).map<String>((m) {
-          if (m is String) return m;
-          if (m is Map && m['id'] != null) return m['id'].toString();
-          return '';
-        }).where((e) => e.isNotEmpty).toList();
+        memberIds =
+            (rawMembers as List<dynamic>)
+                .map<String>((m) {
+                  if (m is String) return m;
+                  if (m is Map && m['id'] != null) return m['id'].toString();
+                  return '';
+                })
+                .where((e) => e.isNotEmpty)
+                .toList();
       }
 
       if (!memberIds.contains(user.uid)) continue;
 
-      final eventsSnap = await FirebaseFirestore.instance
-          .collection('calendars')
-          .doc(calendarId)
-          .collection('events')
-          .get();
+      final eventsSnap =
+          await FirebaseFirestore.instance
+              .collection('calendars')
+              .doc(calendarId)
+              .collection('events')
+              .get();
 
       for (final eventDoc in eventsSnap.docs) {
         final data = eventDoc.data();
 
         if (isShared) {
-          final src = (data['source'] ?? '').toString(); // 'google' for google-imported
-          final creatorId = (data['creatorId'] ?? data['createdById'] ?? '').toString();
+          final src =
+              (data['source'] ?? '').toString(); // 'google' for google-imported
+          final creatorId =
+              (data['creatorId'] ?? data['createdById'] ?? '').toString();
 
-            // ❌ Hide my own Google-imported events from shared calendars
-            if (src == 'google' && creatorId == user.uid) continue;
-
-            // ✅ Show my manual events in shared calendars
-            // (i.e., do nothing here; let them pass through)
-
-            // ✅ Show friend's Google events (and manual) by default
-          }
-
+          // ❌ Hide my own Google-imported events from shared calendars
+          if (src == 'google' && creatorId == user.uid) continue;
+          // ✅ Show other cases
+        }
 
         final Timestamp? st = data['startTime'] as Timestamp?;
         final Timestamp? et = data['endTime'] as Timestamp?;
@@ -346,12 +385,28 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
         final start = st.toDate();
         final end = et.toDate();
-        final normalizedEnd = DateTime(end.year, end.month, end.day, 23, 59, 59);
+        final normalizedEnd = DateTime(
+          end.year,
+          end.month,
+          end.day,
+          23,
+          59,
+          59,
+        );
 
-        final color = Color.fromARGB(255, random.nextInt(200), random.nextInt(200), random.nextInt(200));
+        final color = Color.fromARGB(
+          255,
+          random.nextInt(200),
+          random.nextInt(200),
+          random.nextInt(200),
+        );
         _eventColors[eventDoc.id] = color;
 
-        for (DateTime d = start; !d.isAfter(normalizedEnd); d = d.add(const Duration(days: 1))) {
+        for (
+          DateTime d = start;
+          !d.isAfter(normalizedEnd);
+          d = d.add(const Duration(days: 1))
+        ) {
           final dateOnly = DateTime(d.year, d.month, d.day);
           (tempEvents[dateOnly] ??= []).add({
             ...data,
@@ -393,7 +448,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   }
 
   Future<void> _switchGoogleAccount() async {
-    try { await GoogleCalendarService.instance.signOut(); } catch (_) {}
+    try {
+      await GoogleCalendarService.instance.signOut();
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       _googleSyncEnabled = false;
@@ -414,24 +471,30 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       barrierDismissible: true,
       barrierColor: Colors.transparent, // keep page bright behind
       builder: (_) {
-        final theme  = Theme.of(context);
-        final cs     = theme.colorScheme;
+        final theme = Theme.of(context);
+        final cs = theme.colorScheme;
         final isDark = theme.brightness == Brightness.dark;
-        final gv     = _glassVars(context);
-        final bool isLinked = _googleSyncEnabled && (_linkedCalendarSummary ?? '').isNotEmpty;
+        final gv = _glassVars(context);
+        final bool isLinked =
+            _googleSyncEnabled && (_linkedCalendarSummary ?? '').isNotEmpty;
 
         return Dialog(
           elevation: 0,
           backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
+          ),
           child: DecoratedBox(
-            decoration: BoxDecoration(boxShadow: [
-              BoxShadow(
-                blurRadius: isDark ? 18 : 22,
-                offset: const Offset(0, 6),
-                color: Colors.black.withOpacity(gv.shadowOpacity),
-              ),
-            ]),
+            decoration: BoxDecoration(
+              boxShadow: [
+                BoxShadow(
+                  blurRadius: isDark ? 18 : 22,
+                  offset: const Offset(0, 6),
+                  color: Colors.black.withOpacity(gv.shadowOpacity),
+                ),
+              ],
+            ),
             child: GlassPanel(
               radius: const BorderRadius.all(Radius.circular(18)),
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -534,17 +597,22 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   Future<void> _onAddGoogleSync() async {
     if (_masterCalendarId == null) await _initMasterId();
     if (_masterCalendarId == null) {
-      _toast('Master calendar not found.', icon: Icons.error, color: Colors.redAccent);
+      _toast(
+        'Master calendar not found.',
+        icon: Icons.error,
+        color: Colors.redAccent,
+      );
       return;
     }
     if (!await _ensureGoogleSession()) return;
 
-    final cfgSnap = await FirebaseFirestore.instance
-        .collection('calendars')
-        .doc(_masterCalendarId)
-        .collection('integrations')
-        .doc('google')
-        .get();
+    final cfgSnap =
+        await FirebaseFirestore.instance
+            .collection('calendars')
+            .doc(_masterCalendarId)
+            .collection('integrations')
+            .doc('google')
+            .get();
 
     final cfg = cfgSnap.data();
     if (cfg != null && (cfg['calendarId'] as String?) != null) {
@@ -565,21 +633,27 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
             .collection('integrations')
             .doc('google')
             .set({
-          'enabled': false,
-          'calendarId': null,
-          'calendarSummary': null,
-          'syncToken': null,
-          'lastSyncAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+              'enabled': false,
+              'calendarId': null,
+              'calendarSummary': null,
+              'syncToken': null,
+              'lastSyncAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
       }
-      try { await GoogleCalendarService.instance.signOut(); } catch (_) {}
+      try {
+        await GoogleCalendarService.instance.signOut();
+      } catch (_) {}
       if (!mounted) return;
       setState(() {
         _googleSyncEnabled = false;
         _linkedCalendarSummary = null;
         _googleSignedIn = false;
       });
-      _toast('Google sync off • removed $removed events', icon: Icons.link_off, color: Colors.deepOrange);
+      _toast(
+        'Google sync off • removed $removed events',
+        icon: Icons.link_off,
+        color: Colors.deepOrange,
+      );
       return;
     }
     await _pickCalendarAndImport();
@@ -589,7 +663,8 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final col = await _personalEventsCol();
     int deleted = 0;
     while (true) {
-      final page = await col.where('source', isEqualTo: 'google').limit(400).get();
+      final page =
+          await col.where('source', isEqualTo: 'google').limit(400).get();
       if (page.docs.isEmpty) break;
       final batch = FirebaseFirestore.instance.batch();
       for (final d in page.docs) {
@@ -630,12 +705,13 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final now = DateTime.now();
     final pulled = await _withLoading(
       message: 'Fetching events…',
-      task: () => svc.listEvents(
-        calendarId: chosen.id!,
-        syncToken: null,
-        timeMin: DateTime(now.year, now.month - 6, now.day),
-        timeMax: DateTime(now.year + 1, now.month, now.day),
-      ),
+      task:
+          () => svc.listEvents(
+            calendarId: chosen.id!,
+            syncToken: null,
+            timeMin: DateTime(now.year, now.month - 6, now.day),
+            timeMax: DateTime(now.year + 1, now.month, now.day),
+          ),
     );
 
     final preview = <Map<String, dynamic>>[];
@@ -643,16 +719,20 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       final m = _mapGoogleEventToLocalDoc(e);
       if (m != null) preview.add(m);
     }
-    preview.sort((a, b) =>
-        (a['startTime'] as Timestamp).toDate().compareTo((b['startTime'] as Timestamp).toDate()));
+    preview.sort(
+      (a, b) => (a['startTime'] as Timestamp).toDate().compareTo(
+        (b['startTime'] as Timestamp).toDate(),
+      ),
+    );
 
     final selected = await showModalBottomSheet<List<Map<String, dynamic>>>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _PreviewSelectSheet(
-        events: preview,
-        calendarName: chosen.summary ?? chosen.id!,
-      ),
+      builder:
+          (_) => _PreviewSelectSheet(
+            events: preview,
+            calendarName: chosen.summary ?? chosen.id!,
+          ),
     );
     if (selected == null || selected.isEmpty) return;
 
@@ -665,12 +745,12 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
           .collection('integrations')
           .doc('google')
           .set({
-        'enabled': true,
-        'calendarId': chosen.id,
-        'calendarSummary': chosen.summary,
-        'syncToken': pulled.nextSyncToken,
-        'lastSyncAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+            'enabled': true,
+            'calendarId': chosen.id,
+            'calendarSummary': chosen.summary,
+            'syncToken': pulled.nextSyncToken,
+            'lastSyncAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
     }
 
     setState(() {
@@ -687,12 +767,13 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     if (_masterCalendarId == null) return;
     if (!await _ensureGoogleSession()) return;
 
-    final cfgSnap = await FirebaseFirestore.instance
-        .collection('calendars')
-        .doc(_masterCalendarId)
-        .collection('integrations')
-        .doc('google')
-        .get();
+    final cfgSnap =
+        await FirebaseFirestore.instance
+            .collection('calendars')
+            .doc(_masterCalendarId)
+            .collection('integrations')
+            .doc('google')
+            .get();
     final cfg = cfgSnap.data() ?? {};
     final String? gCalId = cfg['calendarId'] as String?;
     if (gCalId == null) {
@@ -705,12 +786,13 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
     final pulled = await _withLoading(
       message: 'Syncing…',
-      task: () => svc.listEvents(
-        calendarId: gCalId,
-        syncToken: null,
-        timeMin: win.from,
-        timeMax: win.to,
-      ),
+      task:
+          () => svc.listEvents(
+            calendarId: gCalId,
+            syncToken: null,
+            timeMin: win.from,
+            timeMax: win.to,
+          ),
     );
 
     final googleMapped = <Map<String, dynamic>>[];
@@ -718,15 +800,19 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       final m = _mapGoogleEventToLocalDoc(e);
       if (m != null) googleMapped.add(m);
     }
-    final googleKeys = <String>{ for (final m in googleMapped) _keyForMapped(m) };
+    final googleKeys = <String>{for (final m in googleMapped) _keyForMapped(m)};
 
     final col = await _personalEventsCol();
-    final existingSnap = await col
-        .where('source', isEqualTo: 'google')
-        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(win.from))
-        .where('startTime', isLessThanOrEqualTo: Timestamp.fromDate(win.to))
-        .limit(3000)
-        .get();
+    final existingSnap =
+        await col
+            .where('source', isEqualTo: 'google')
+            .where(
+              'startTime',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(win.from),
+            )
+            .where('startTime', isLessThanOrEqualTo: Timestamp.fromDate(win.to))
+            .limit(3000)
+            .get();
 
     final existingKeys = <String, String>{}; // key -> docId
     for (final d in existingSnap.docs) {
@@ -750,12 +836,18 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     for (final m in toAdd) {
       batch.set(col.doc(), m);
       added++;
-      if (added % 400 == 0) { await batch.commit(); batch = FirebaseFirestore.instance.batch(); }
+      if (added % 400 == 0) {
+        await batch.commit();
+        batch = FirebaseFirestore.instance.batch();
+      }
     }
     for (final docId in toDelete) {
       batch.delete(col.doc(docId));
       deleted++;
-      if (deleted % 400 == 0) { await batch.commit(); batch = FirebaseFirestore.instance.batch(); }
+      if (deleted % 400 == 0) {
+        await batch.commit();
+        batch = FirebaseFirestore.instance.batch();
+      }
     }
     await batch.commit();
 
@@ -765,9 +857,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
         .collection('integrations')
         .doc('google')
         .set({
-      'syncToken': pulled.nextSyncToken ?? cfg['syncToken'],
-      'lastSyncAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+          'syncToken': pulled.nextSyncToken ?? cfg['syncToken'],
+          'lastSyncAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
 
     _toast('Sync complete: added $added, deleted $deleted');
     await _loadEvents();
@@ -785,7 +877,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
     if (e.start?.dateTime != null && e.end?.dateTime != null) {
       start = e.start!.dateTime!.toLocal();
-      end   = e.end!.dateTime!.toLocal();
+      end = e.end!.dateTime!.toLocal();
     } else if (e.start?.date != null && e.end?.date != null) {
       final s = e.start!.date!;
       final t = e.end!.date!;
@@ -797,12 +889,15 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     }
     if (end.isBefore(start)) return null;
 
+    final isAllDay = e.start?.date != null;
+
     return {
       'title': title,
       'description': desc,
       'startTime': Timestamp.fromDate(start),
       'endTime': Timestamp.fromDate(end),
-      'isAllDay': e.start?.date != null,
+      'allDay': isAllDay, // unified field
+      'isAllDay': isAllDay, // (optional) keep for back-compat
       'googleEventId': e.id,
       'iCalUID': e.iCalUID,
       'source': 'google',
@@ -818,10 +913,14 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
     final now = DateTime.now();
     final from = DateTime(now.year - 1);
-    final existingSnap = await ref
-        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
-        .limit(3000)
-        .get();
+    final existingSnap =
+        await ref
+            .where(
+              'startTime',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(from),
+            )
+            .limit(3000)
+            .get();
 
     final seen = <String>{};
     for (final d in existingSnap.docs) {
@@ -854,16 +953,30 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final String calendarName = (event['calendarName'] ?? '').toString().trim();
     final bool isSharedEvent = event['isShared'] == true;
 
+    // Build time label (no date). Respect either `allDay` or legacy `isAllDay`.
+    final eventForLabel = Map<String, dynamic>.from(event)
+      ..['allDay'] = (event['allDay'] ?? event['isAllDay'] ?? false) == true;
+
+    final timeLabel =
+        (event['startTime'] != null && event['endTime'] != null)
+            ? EventCrud.timeLabelForDay(
+              eventForLabel,
+              displayDate ?? _selectedDay,
+            )
+            : '';
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: DecoratedBox(
-        decoration: BoxDecoration(boxShadow: [
-          BoxShadow(
-            blurRadius: isDark ? 16 : 18,
-            offset: const Offset(0, 3),
-            color: Colors.black.withOpacity(gv.shadowOpacity * 0.8),
-          ),
-        ]),
+        decoration: BoxDecoration(
+          boxShadow: [
+            BoxShadow(
+              blurRadius: isDark ? 16 : 18,
+              offset: const Offset(0, 3),
+              color: Colors.black.withOpacity(gv.shadowOpacity * 0.8),
+            ),
+          ],
+        ),
         child: GlassPanel(
           radius: const BorderRadius.all(Radius.circular(16)),
           padding: const EdgeInsets.fromLTRB(14, 12, 12, 8),
@@ -880,7 +993,14 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                 children: [
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
-                    child: Text('•', style: TextStyle(fontSize: 20, height: 1.2, color: cs.onSurface)),
+                    child: Text(
+                      '•',
+                      style: TextStyle(
+                        fontSize: 20,
+                        height: 1.2,
+                        color: cs.onSurface,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -899,22 +1019,20 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
                             child: Text(
-                              calendarName.isNotEmpty ? 'by $creator on $calendarName' : 'by $creator',
+                              calendarName.isNotEmpty
+                                  ? 'by $creator on $calendarName'
+                                  : 'by $creator',
                               style: tt.bodySmall?.copyWith(
                                 color: cs.onSurface.withOpacity(0.8),
                                 fontStyle: FontStyle.italic,
                               ),
                             ),
                           ),
-                        if (event['startTime'] != null && event['endTime'] != null)
+                        if (timeLabel.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(top: 6),
                             child: Text(
-                              _formatEventTime(
-                                displayDate ?? _selectedDay,
-                                (event['startTime'] as Timestamp?)?.toDate(),
-                                (event['endTime'] as Timestamp?)?.toDate(),
-                              ),
+                              timeLabel, // <-- time-only / All-day
                               style: tt.bodyMedium?.copyWith(
                                 fontWeight: FontWeight.w600,
                                 color: cs.onSurface,
@@ -945,10 +1063,11 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                     onPressed: () async {
                       await EventCrud.showAddOrEditDialog(
                         context: context,
-                        getEventsCollection: () async => FirebaseFirestore.instance
-                            .collection('calendars')
-                            .doc(event['calendarId'])
-                            .collection('events'),
+                        getEventsCollection:
+                            () async => FirebaseFirestore.instance
+                                .collection('calendars')
+                                .doc(event['calendarId'])
+                                .collection('events'),
                         canEdit: true,
                         disallowPastDates: true,
                         existingEvent: event,
@@ -960,15 +1079,17 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                     child: const Text('Edit'),
                   ),
                   TextButton(
-                    onPressed: () => EventCrud.confirmAndDelete(
-                      context: context,
-                      getEventsCollection: () async => FirebaseFirestore.instance
-                          .collection('calendars')
-                          .doc(event['calendarId'])
-                          .collection('events'),
-                      eventId: event['id'],
-                      onAfterDelete: _loadEvents,
-                    ),
+                    onPressed:
+                        () => EventCrud.confirmAndDelete(
+                          context: context,
+                          getEventsCollection:
+                              () async => FirebaseFirestore.instance
+                                  .collection('calendars')
+                                  .doc(event['calendarId'])
+                                  .collection('events'),
+                          eventId: event['id'],
+                          onAfterDelete: _loadEvents,
+                        ),
                     child: const Text('Delete'),
                   ),
                 ],
@@ -1032,14 +1153,15 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       onDaySelected: (selectedDay, focusedDay) {
         setState(() {
           _selectedDay = selectedDay;
-          _focusedDay  = focusedDay;
+          _focusedDay = focusedDay;
         });
       },
       onPageChanged: (focusedDay) {
         setState(() {
           _focusedDay = focusedDay;
           final carry = _selectedDay.day;
-          final lastDay = DateTime(focusedDay.year, focusedDay.month + 1, 0).day;
+          final lastDay =
+              DateTime(focusedDay.year, focusedDay.month + 1, 0).day;
           final newDay = min(carry, lastDay);
           _selectedDay = DateTime(focusedDay.year, focusedDay.month, newDay);
         });
@@ -1048,75 +1170,136 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       headerStyle: HeaderStyle(
         formatButtonVisible: false,
         titleCentered: true,
-        titleTextStyle: tt.titleSmall!.copyWith(fontWeight: FontWeight.bold, color: cs.onSurface),
+        titleTextStyle: tt.titleSmall!.copyWith(
+          fontWeight: FontWeight.bold,
+          color: cs.onSurface,
+        ),
         headerPadding: const EdgeInsets.symmetric(vertical: 8),
         leftChevronIcon: Icon(Icons.chevron_left, color: cs.onSurface),
         rightChevronIcon: Icon(Icons.chevron_right, color: cs.onSurface),
       ),
       calendarStyle: CalendarStyle(
-        selectedDecoration: const BoxDecoration(shape: BoxShape.circle).copyWith(color: cs.primary),
-        selectedTextStyle: TextStyle(color: cs.onPrimary, fontWeight: FontWeight.w700),
-        todayDecoration: const BoxDecoration(shape: BoxShape.circle).copyWith(color: cs.secondaryContainer),
-        todayTextStyle: TextStyle(color: cs.onSecondaryContainer, fontWeight: FontWeight.w700),
+        selectedDecoration: const BoxDecoration(
+          shape: BoxShape.circle,
+        ).copyWith(color: cs.primary),
+        selectedTextStyle: TextStyle(
+          color: cs.onPrimary,
+          fontWeight: FontWeight.w700,
+        ),
+        todayDecoration: const BoxDecoration(
+          shape: BoxShape.circle,
+        ).copyWith(color: cs.secondaryContainer),
+        todayTextStyle: TextStyle(
+          color: cs.onSecondaryContainer,
+          fontWeight: FontWeight.w700,
+        ),
         defaultTextStyle: tt.bodyMedium!.copyWith(color: cs.onSurface),
         weekendTextStyle: tt.bodyMedium!.copyWith(color: cs.onSurface),
-        outsideTextStyle: tt.bodyMedium!.copyWith(color: cs.onSurface.withOpacity(0.40)),
-        markerDecoration: BoxDecoration(color: cs.tertiary, shape: BoxShape.circle),
+        outsideTextStyle: tt.bodyMedium!.copyWith(
+          color: cs.onSurface.withOpacity(0.40),
+        ),
+        markerDecoration: BoxDecoration(
+          color: cs.tertiary,
+          shape: BoxShape.circle,
+        ),
         outsideDaysVisible: true,
       ),
       calendarBuilders: CalendarBuilders(
-        headerTitleBuilder: (context, day) => Material(
-          color: Colors.transparent,
-          child: InkWell(
-            splashColor: Colors.transparent,
-            onTap: () async {
-              final picked = await showDatePicker(
-                context: context,
-                initialDate: _focusedDay,
-                firstDate: DateTime(2000),
-                lastDate: DateTime(2100),
-                initialDatePickerMode: DatePickerMode.year,
-                initialEntryMode: DatePickerEntryMode.calendarOnly,
-              );
-              if (picked != null) {
-                final carry = _selectedDay.day;
-                final lastDay = DateTime(picked.year, picked.month + 1, 0).day;
-                final newDay = min(carry, lastDay);
-                setState(() {
-                  _focusedDay = picked;
-                  _selectedDay = DateTime(picked.year, picked.month, newDay);
-                });
-              }
-            },
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.calendar_today, size: 20, color: cs.onSurface),
-                const SizedBox(width: 6),
-                Text(
-                  DateFormat('MMMM yyyy').format(_focusedDay),
-                  style: tt.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: cs.onSurface,
-                  ),
+        headerTitleBuilder:
+            (context, day) => Material(
+              color: Colors.transparent,
+              child: InkWell(
+                splashColor: Colors.transparent,
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: _focusedDay,
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime(2100),
+                    initialDatePickerMode: DatePickerMode.year,
+                    initialEntryMode: DatePickerEntryMode.calendarOnly,
+                  );
+                  if (picked != null) {
+                    final carry = _selectedDay.day;
+                    final lastDay =
+                        DateTime(picked.year, picked.month + 1, 0).day;
+                    final newDay = min(carry, lastDay);
+                    setState(() {
+                      _focusedDay = picked;
+                      _selectedDay = DateTime(
+                        picked.year,
+                        picked.month,
+                        newDay,
+                      );
+                    });
+                  }
+                },
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.calendar_today, size: 20, color: cs.onSurface),
+                    const SizedBox(width: 6),
+                    Text(
+                      DateFormat('MMMM yyyy').format(_focusedDay),
+                      style: tt.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
         markerBuilder: (context, date, events) {
           if (events.isEmpty) return const SizedBox();
+
+          final theme = Theme.of(context);
+          final cs = theme.colorScheme;
+          final isDark = theme.brightness == Brightness.dark;
+
+          // Determine presence of personal vs shared events
+          bool hasPersonal = false;
+          bool hasShared = false;
+          for (final e in events.cast<Map<String, dynamic>>()) {
+            final shared = (e['isShared'] == true);
+            if (shared) {
+              hasShared = true;
+            } else {
+              hasPersonal = true;
+            }
+            if (hasPersonal && hasShared) break;
+          }
+
+          // Dot widget with a subtle contrasting border
+          Widget dot(Color fill) => Container(
+            margin: const EdgeInsets.symmetric(horizontal: 1.0, vertical: 1.5),
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(
+              color: fill,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color:
+                    isDark
+                        ? Colors.black.withOpacity(0.55)
+                        : Colors.white.withOpacity(0.85),
+                width: 1,
+              ),
+            ),
+          );
+
+          // Personal = accent; Shared = standardized (black on light, white on dark)
+          final personalDotColor = cs.primary;
+          final sharedDotColor = isDark ? Colors.white : Colors.black;
+
+          final dots = <Widget>[
+            if (hasPersonal) dot(personalDotColor),
+            if (hasShared) dot(sharedDotColor),
+          ];
+
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: events.map((e) {
-              final event = e as Map<String, dynamic>;
-              final color = _eventColors[event['id']] ?? cs.tertiary;
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 0.5, vertical: 1.5),
-                width: 6, height: 6,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              );
-            }).toList(),
+            children: dots,
           );
         },
       ),
@@ -1174,121 +1357,175 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       textStyle: tt.labelLarge,
     );
 
-    final titleText = _agendaView == _AgendaView.day
-        ? 'Your schedule for ${DateFormat('EEE, d MMM yyyy').format(_selectedDay)}'
-        : 'Your schedule for ${DateFormat('MMMM yyyy').format(_focusedDay)}';
+    final titleText =
+        _agendaView == _AgendaView.day
+            ? 'Your schedule for ${DateFormat('EEE, d MMM yyyy').format(_selectedDay)}'
+            : 'Your schedule for ${DateFormat('MMMM yyyy').format(_focusedDay)}';
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    MediaQuery.of(context).size.width < 500
-                        ? SizedBox(height: 440, child: calendarPanel)
-                        : calendarPanel,
-                    const SizedBox(height: 12),
+      body:
+          _loading
+              ? const Center(child: CircularProgressIndicator())
+              : SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      MediaQuery.of(context).size.width < 500
+                          ? SizedBox(height: 440, child: calendarPanel)
+                          : calendarPanel,
+                      const SizedBox(height: 12),
 
-                    // Toolbar
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          LayoutBuilder(
-                            builder: (context, constraints) {
-                              final narrow = constraints.maxWidth < 480;
+                      // Toolbar
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final narrow = constraints.maxWidth < 480;
 
-                              final chips = Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  buildModeChip(context, label: 'Day', selected: _agendaView == _AgendaView.day, onTap: () => setState(() => _agendaView = _AgendaView.day)),
-                                  buildModeChip(context, label: 'Month', selected: _agendaView == _AgendaView.month, onTap: () => setState(() => _agendaView = _AgendaView.month)),
-                                ],
-                              );
-
-                              Widget googleBtn() => ElevatedButton.icon(
-                                    onPressed: _openGoogleCard,
-                                    icon: const Icon(Icons.cloud_sync, size: 18),
-                                    label: ConstrainedBox(
-                                      constraints: const BoxConstraints(maxWidth: 220),
-                                      child: Text(
-                                        _googleSyncEnabled
-                                            ? (_linkedCalendarSummary?.isNotEmpty == true
-                                                ? 'Google: ${_linkedCalendarSummary!}'
-                                                : 'Google linked')
-                                            : 'Import Google Calendar',
-                                        overflow: TextOverflow.ellipsis,
+                                final chips = Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    buildModeChip(
+                                      context,
+                                      label: 'Today',
+                                      selected: isSameDay(
+                                        _selectedDay,
+                                        DateTime.now(),
                                       ),
+                                      onTap: _goToToday,
                                     ),
-                                    style: _pillBtn(),
-                                  );
+                                    buildModeChip(
+                                      context,
+                                      label: 'Day',
+                                      selected: _agendaView == _AgendaView.day,
+                                      onTap:
+                                          () => setState(
+                                            () => _agendaView = _AgendaView.day,
+                                          ),
+                                    ),
+                                    buildModeChip(
+                                      context,
+                                      label: 'Month',
+                                      selected:
+                                          _agendaView == _AgendaView.month,
+                                      onTap:
+                                          () => setState(
+                                            () =>
+                                                _agendaView = _AgendaView.month,
+                                          ),
+                                    ),
 
-                              Widget addBtn() => ElevatedButton.icon(
-                                    onPressed: _openManualAdd,
-                                    icon: const Icon(Icons.add, size: 18),
-                                    label: const Text('Add Event'),
-                                    style: _pillBtn(),
-                                  );
-
-                              if (narrow) {
-                                return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    chips,
-                                    const SizedBox(height: 10),
-                                    Wrap(spacing: 8, runSpacing: 8, children: [googleBtn(), addBtn()]),
+                                    // NEW: Today chip
                                   ],
                                 );
-                              } else {
-                                return Row(
-                                  children: [
-                                    Expanded(child: chips),
-                                    const SizedBox(width: 8),
-                                    googleBtn(),
-                                    const SizedBox(width: 8),
-                                    addBtn(),
-                                  ],
+
+                                Widget googleBtn() => ElevatedButton.icon(
+                                  onPressed: _openGoogleCard,
+                                  icon: const Icon(Icons.cloud_sync, size: 18),
+                                  label: ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 220,
+                                    ),
+                                    child: Text(
+                                      _googleSyncEnabled
+                                          ? (_linkedCalendarSummary
+                                                      ?.isNotEmpty ==
+                                                  true
+                                              ? 'Google: ${_linkedCalendarSummary!}'
+                                              : 'Google linked')
+                                          : 'Import Google Calendar',
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  style: _pillBtn(),
                                 );
-                              }
-                            },
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            titleText,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: tt.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: cs.primary,
+
+                                Widget addBtn() => ElevatedButton.icon(
+                                  onPressed: _openManualAdd,
+                                  icon: const Icon(Icons.add, size: 18),
+                                  label: const Text('Add Event'),
+                                  style: _pillBtn(),
+                                );
+
+                                if (narrow) {
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      chips,
+                                      const SizedBox(height: 10),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: [googleBtn(), addBtn()],
+                                      ),
+                                    ],
+                                  );
+                                } else {
+                                  return Row(
+                                    children: [
+                                      Expanded(child: chips),
+                                      const SizedBox(width: 8),
+                                      googleBtn(),
+                                      const SizedBox(width: 8),
+                                      addBtn(),
+                                    ],
+                                  );
+                                }
+                              },
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8),
+                            Text(
+                              titleText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: tt.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: cs.primary,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
 
-                    const SizedBox(height: 8),
+                      const SizedBox(height: 8),
 
-                    if (_agendaView == _AgendaView.day)
-                      ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        padding: const EdgeInsets.only(top: 8),
-                        itemCount: (_events[DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day)] ?? []).length,
-                        itemBuilder: (context, index) =>
-                            _buildEventCard((_events[DateTime(_selectedDay.year, _selectedDay.month, _selectedDay.day)] ?? [])[index]),
-                      )
-                    else
-                      _buildMonthAgenda(),
-                  ],
+                      if (_agendaView == _AgendaView.day)
+                        ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          padding: const EdgeInsets.only(top: 8),
+                          itemCount:
+                              (_events[DateTime(
+                                        _selectedDay.year,
+                                        _selectedDay.month,
+                                        _selectedDay.day,
+                                      )] ??
+                                      [])
+                                  .length,
+                          itemBuilder:
+                              (context, index) => _buildEventCard(
+                                (_events[DateTime(
+                                      _selectedDay.year,
+                                      _selectedDay.month,
+                                      _selectedDay.day,
+                                    )] ??
+                                    [])[index],
+                              ),
+                        )
+                      else
+                        _buildMonthAgenda(),
+                    ],
+                  ),
                 ),
               ),
-            ),
     );
   }
 
@@ -1342,19 +1579,22 @@ class _GoogleActionTileState extends State<_GoogleActionTile> {
     final baseFg = widget.destructive ? Colors.red : cs.onSurface;
 
     final fg = disabled ? cs.outline : (_hover ? accent : baseFg);
-    final bg = _hover
-        ? (widget.destructive
-            ? Colors.red.withOpacity(isDark ? 0.14 : 0.10)
-            : cs.primary.withOpacity(isDark ? 0.12 : 0.08))
-        : Colors.transparent;
-    final border = _hover
-        ? accent.withOpacity(isDark ? 0.50 : 0.60)
-        : Colors.transparent;
+    final bg =
+        _hover
+            ? (widget.destructive
+                ? Colors.red.withOpacity(isDark ? 0.14 : 0.10)
+                : cs.primary.withOpacity(isDark ? 0.12 : 0.08))
+            : Colors.transparent;
+    final border =
+        _hover ? accent.withOpacity(isDark ? 0.50 : 0.60) : Colors.transparent;
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      cursor: widget.onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor:
+          widget.onTap != null
+              ? SystemMouseCursors.click
+              : SystemMouseCursors.basic,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOut,
@@ -1367,9 +1607,14 @@ class _GoogleActionTileState extends State<_GoogleActionTile> {
           dense: true,
           visualDensity: VisualDensity.compact,
           leading: Icon(widget.icon, color: fg),
-          title: Text(widget.text, style: TextStyle(color: fg, fontWeight: FontWeight.w500)),
+          title: Text(
+            widget.text,
+            style: TextStyle(color: fg, fontWeight: FontWeight.w500),
+          ),
           onTap: widget.onTap,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
     );
@@ -1385,30 +1630,34 @@ class _CalendarPicker extends StatelessWidget {
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.6,
-      builder: (_, controller) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Text('Choose a Google Calendar', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ListView.builder(
-                controller: controller,
-                itemCount: calendars.length,
-                itemBuilder: (_, i) {
-                  final c = calendars[i];
-                  return ListTile(
-                    leading: const Icon(Icons.event),
-                    title: Text(c.summary ?? c.id ?? 'Unnamed'),
-                    subtitle: Text(c.id ?? ''),
-                    onTap: () => Navigator.of(context).pop(c),
-                  );
-                },
-              ),
+      builder:
+          (_, controller) => Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Text(
+                  'Choose a Google Calendar',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ListView.builder(
+                    controller: controller,
+                    itemCount: calendars.length,
+                    itemBuilder: (_, i) {
+                      final c = calendars[i];
+                      return ListTile(
+                        leading: const Icon(Icons.event),
+                        title: Text(c.summary ?? c.id ?? 'Unnamed'),
+                        subtitle: Text(c.id ?? ''),
+                        onTap: () => Navigator.of(context).pop(c),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
     );
   }
 }
@@ -1448,65 +1697,80 @@ class _PreviewSelectSheetState extends State<_PreviewSelectSheet> {
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.86,
-      builder: (_, controller) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Import from "${widget.calendarName}"', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 6),
-            Text('${widget.events.length} events found (last 6 months → next 12 months)'),
-            const Divider(height: 16),
-            Expanded(
-              child: ListView.separated(
-                controller: controller,
-                itemCount: widget.events.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  final m = widget.events[i];
-                  final checked = _selected.contains(i);
-                  return CheckboxListTile(
-                    dense: true,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    value: checked,
-                    onChanged: (v) => setState(() => v == true ? _selected.add(i) : _selected.remove(i)),
-                    title: Text(m['title'] ?? '(No title)'),
-                    subtitle: Text(_line(m)),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
+      builder:
+          (_, controller) => Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Text(
+                  'Import from "${widget.calendarName}"',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${widget.events.length} events found (last 6 months → next 12 months)',
+                ),
+                const Divider(height: 16),
                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(null),
-                    child: const Text('Cancel'),
+                  child: ListView.separated(
+                    controller: controller,
+                    itemCount: widget.events.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final m = widget.events[i];
+                      final checked = _selected.contains(i);
+                      return CheckboxListTile(
+                        dense: true,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: checked,
+                        onChanged:
+                            (v) => setState(
+                              () =>
+                                  v == true
+                                      ? _selected.add(i)
+                                      : _selected.remove(i),
+                            ),
+                        title: Text(m['title'] ?? '(No title)'),
+                        subtitle: Text(_line(m)),
+                      );
+                    },
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.download),
-                    label: Text('Import (${_selected.length})'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: cs.primary,
-                      foregroundColor: cs.onPrimary,
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(null),
+                        child: const Text('Cancel'),
+                      ),
                     ),
-                    onPressed: _selected.isEmpty
-                        ? null
-                        : () {
-                            final chosen = _selected.map((i) => widget.events[i]).toList(growable: false);
-                            Navigator.of(context).pop(chosen);
-                          },
-                  ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.download),
+                        label: Text('Import (${_selected.length})'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: cs.primary,
+                          foregroundColor: cs.onPrimary,
+                        ),
+                        onPressed:
+                            _selected.isEmpty
+                                ? null
+                                : () {
+                                  final chosen = _selected
+                                      .map((i) => widget.events[i])
+                                      .toList(growable: false);
+                                  Navigator.of(context).pop(chosen);
+                                },
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
-        ),
-      ),
+          ),
     );
   }
 }
