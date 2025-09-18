@@ -8,6 +8,7 @@
 //  - Theming: no hardcoded colors; uses ColorScheme/TextTheme
 //  - Transparent Scaffold so ThemeBg wallpaper can show
 //  - GlassPanel applied to calendar frame and event cards
+//  - NEW: per-user hide for shared events (no destructive deletes from shared)
 
 import 'dart:math';
 
@@ -66,6 +67,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
 
   String? _masterCalendarId; // calendars/{id}
 
+  // per-user hidden refs (calendarId::eventId)
+  final Set<String> _hiddenEventRefs = {};
+
   // ---------- Google state ----------
   bool _googleSyncEnabled = false;
   String? _linkedCalendarSummary;
@@ -87,11 +91,17 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     await _ensureUserHasMasterCalendar();
     await _initMasterId();
     await _loadGoogleCfg(); // Firestore only; no auth popup
+    await _loadHiddenEvents(); // <- load personal hides
     await _loadEvents();
   }
 
   // ---------- helpers ----------
-  void _toast(String msg, {IconData? icon, Color? color}) {
+  void _toast(
+    String msg, {
+    IconData? icon,
+    Color? color,
+    SnackBarAction? action,
+  }) {
     final cs = Theme.of(context).colorScheme;
     final bg = color ?? cs.primary;
     final on = cs.onPrimary;
@@ -110,8 +120,84 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
             Expanded(child: Text(msg, style: TextStyle(color: on))),
           ],
         ),
+        action: action,
       ),
     );
+  }
+
+  String _evRefKey(String calId, String evId) => '$calId::$evId';
+
+  Future<void> _loadHiddenEvents() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final snap =
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('hiddenEvents')
+            .limit(5000)
+            .get();
+
+    _hiddenEventRefs
+      ..clear()
+      ..addAll(snap.docs.map((d) => d.id));
+  }
+
+  Future<void> _hideSharedEvent(Map<String, dynamic> event) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    final String calId = event['calendarId'];
+    final String evId = event['id'];
+    final key = _evRefKey(calId, evId);
+
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('hiddenEvents')
+        .doc(key)
+        .set({
+          'calendarId': calId,
+          'eventId': evId,
+          'hiddenAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+    _hiddenEventRefs.add(key);
+    await _loadEvents();
+
+    _toast(
+      'Event hidden from your master view',
+      icon: Icons.visibility_off,
+      action: SnackBarAction(
+        label: 'Undo',
+        textColor: Theme.of(context).colorScheme.onPrimary,
+        onPressed: () async {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .collection('hiddenEvents')
+              .doc(key)
+              .delete();
+          _hiddenEventRefs.remove(key);
+          await _loadEvents();
+        },
+      ),
+    );
+  }
+
+  DateTime _startOfDay(DateTime d) => DateTime(d.year, d.month, d.day);
+  bool _isPastDay(DateTime d) =>
+      _startOfDay(d).isBefore(_startOfDay(DateTime.now()));
+
+  Future<void> _tryAddEvent() async {
+    if (_isPastDay(_selectedDay)) {
+      _toast(
+        "Events can't be created on past dates.",
+        icon: Icons.history_toggle_off,
+      );
+      return;
+    }
+    await _openManualAdd();
   }
 
   void _goToToday() {
@@ -184,19 +270,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       from: DateTime(now.year, now.month - 6, now.day),
       to: DateTime(now.year + 1, now.month, now.day),
     );
-  }
-
-  // (kept for other usages; cards now use EventCrud.timeLabelForDay)
-  String _formatEventTime(
-    DateTime? selectedDate,
-    DateTime? start,
-    DateTime? end,
-  ) {
-    if (start == null || end == null || selectedDate == null) return '';
-    final sd = DateFormat('d MMM yyyy').format(selectedDate);
-    final st = DateFormat('h:mm a').format(start);
-    final et = DateFormat('h:mm a').format(end);
-    return '$sd, $st – $et';
   }
 
   // ---------- master calendar bootstrap ----------
@@ -319,6 +392,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   /// Master aggregates:
   /// - Personal calendar: include all events (including Google).
   /// - Shared calendars: include ONLY events I created manually (exclude 'google').
+  /// - Plus: skip events the current user has hidden.
   Future<void> _loadEvents() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -366,17 +440,19 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
               .get();
 
       for (final eventDoc in eventsSnap.docs) {
+        // SKIP if user hid this event in Master
+        final refKey = _evRefKey(calendarId, eventDoc.id);
+        if (_hiddenEventRefs.contains(refKey)) continue;
+
         final data = eventDoc.data();
 
         if (isShared) {
-          final src =
-              (data['source'] ?? '').toString(); // 'google' for google-imported
+          final src = (data['source'] ?? '').toString(); // 'google'
           final creatorId =
               (data['creatorId'] ?? data['createdById'] ?? '').toString();
 
           // ❌ Hide my own Google-imported events from shared calendars
           if (src == 'google' && creatorId == user.uid) continue;
-          // ✅ Show other cases
         }
 
         final Timestamp? st = data['startTime'] as Timestamp?;
@@ -394,13 +470,12 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
           59,
         );
 
-        final color = Color.fromARGB(
+        _eventColors[eventDoc.id] = Color.fromARGB(
           255,
           random.nextInt(200),
           random.nextInt(200),
           random.nextInt(200),
         );
-        _eventColors[eventDoc.id] = color;
 
         for (
           DateTime d = start;
@@ -427,7 +502,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   }
 
   // ---------- GOOGLE: session / actions ----------
-
   Future<bool> _ensureGoogleSession() async {
     final svc = GoogleCalendarService.instance;
 
@@ -953,6 +1027,15 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
     final String calendarName = (event['calendarName'] ?? '').toString().trim();
     final bool isSharedEvent = event['isShared'] == true;
 
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final String creatorId =
+        (event['creatorId'] ?? event['createdById'] ?? '').toString();
+
+    final bool showEdit   = !isSharedEvent || (creatorId == uid); // personal OR shared-by-me
+    final bool showDelete = !isSharedEvent;                        // only personal
+    final bool showHide   = isSharedEvent;                         // any shared
+
+
     // Build time label (no date). Respect either `allDay` or legacy `isAllDay`.
     final eventForLabel = Map<String, dynamic>.from(event)
       ..['allDay'] = (event['allDay'] ?? event['isAllDay'] ?? false) == true;
@@ -1057,43 +1140,56 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
               ),
               const SizedBox(height: 8),
               Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () async {
-                      await EventCrud.showAddOrEditDialog(
-                        context: context,
-                        getEventsCollection:
-                            () async => FirebaseFirestore.instance
-                                .collection('calendars')
-                                .doc(event['calendarId'])
-                                .collection('events'),
-                        canEdit: true,
-                        disallowPastDates: true,
-                        existingEvent: event,
-                        buttonColor: cs.primary,
-                        textDark: cs.onPrimary,
-                        onAfterWrite: _loadEvents,
-                      );
-                    },
-                    child: const Text('Edit'),
-                  ),
-                  TextButton(
-                    onPressed:
-                        () => EventCrud.confirmAndDelete(
-                          context: context,
-                          getEventsCollection:
-                              () async => FirebaseFirestore.instance
-                                  .collection('calendars')
-                                  .doc(event['calendarId'])
-                                  .collection('events'),
-                          eventId: event['id'],
-                          onAfterDelete: _loadEvents,
-                        ),
-                    child: const Text('Delete'),
-                  ),
-                ],
-              ),
+  mainAxisAlignment: MainAxisAlignment.end,
+  children: [
+    if (showEdit)
+      TextButton(
+        onPressed: () async {
+          final startDate =
+              (event['startTime'] as Timestamp?)?.toDate() ?? DateTime.now();
+          if (_isPastDay(startDate)) {
+            _toast("Events can’t be created or edited on past dates.", icon: Icons.lock_clock);
+            return;
+          }
+          await EventCrud.showAddOrEditDialog(
+            context: context,
+            getEventsCollection: () async => FirebaseFirestore.instance
+                .collection('calendars')
+                .doc(event['calendarId'])
+                .collection('events'),
+            canEdit: true,
+            disallowPastDates: true,
+            existingEvent: event,
+            buttonColor: Theme.of(context).colorScheme.primary,
+            textDark: Theme.of(context).colorScheme.onPrimary,
+            onAfterWrite: _loadEvents,
+          );
+        },
+        child: const Text('Edit'),
+      ),
+
+    if (showHide)
+      TextButton(
+        onPressed: () => _hideSharedEvent(event),
+        child: const Text('Hide'),
+      ),
+
+    if (showDelete)
+      TextButton(
+        onPressed: () => EventCrud.confirmAndDelete(
+          context: context,
+          getEventsCollection: () async => FirebaseFirestore.instance
+              .collection('calendars')
+              .doc(event['calendarId'])
+              .collection('events'),
+          eventId: event['id'],
+          onAfterDelete: _loadEvents,
+        ),
+        child: const Text('Delete'),
+      ),
+  ],
+)
+
             ],
           ),
         ),
@@ -1198,10 +1294,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
         outsideTextStyle: tt.bodyMedium!.copyWith(
           color: cs.onSurface.withOpacity(0.40),
         ),
-        markerDecoration: BoxDecoration(
-          color: cs.tertiary,
-          shape: BoxShape.circle,
-        ),
+        markerDecoration: const BoxDecoration(shape: BoxShape.circle),
         outsideDaysVisible: true,
       ),
       calendarBuilders: CalendarBuilders(
@@ -1257,20 +1350,12 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
           final cs = theme.colorScheme;
           final isDark = theme.brightness == Brightness.dark;
 
-          // Determine presence of personal vs shared events
-          bool hasPersonal = false;
-          bool hasShared = false;
+          bool hasPersonal = false, hasShared = false;
           for (final e in events.cast<Map<String, dynamic>>()) {
-            final shared = (e['isShared'] == true);
-            if (shared) {
-              hasShared = true;
-            } else {
-              hasPersonal = true;
-            }
+            (e['isShared'] == true) ? hasShared = true : hasPersonal = true;
             if (hasPersonal && hasShared) break;
           }
 
-          // Dot widget with a subtle contrasting border
           Widget dot(Color fill) => Container(
             margin: const EdgeInsets.symmetric(horizontal: 1.0, vertical: 1.5),
             width: 7,
@@ -1288,13 +1373,10 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
             ),
           );
 
-          // Personal = accent; Shared = standardized (black on light, white on dark)
-          final personalDotColor = cs.primary;
-          final sharedDotColor = isDark ? Colors.white : Colors.black;
-
+          final accent = cs.primary; // single accent color for all dots
           final dots = <Widget>[
-            if (hasPersonal) dot(personalDotColor),
-            if (hasShared) dot(sharedDotColor),
+            if (hasPersonal) dot(accent),
+            if (hasShared) dot(accent),
           ];
 
           return Row(
@@ -1421,8 +1503,6 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                                                 _agendaView = _AgendaView.month,
                                           ),
                                     ),
-
-                                    // NEW: Today chip
                                   ],
                                 );
 
@@ -1435,9 +1515,9 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                                     ),
                                     child: Text(
                                       _googleSyncEnabled
-                                          ? (_linkedCalendarSummary
+                                          ? ((_linkedCalendarSummary
                                                       ?.isNotEmpty ==
-                                                  true
+                                                  true)
                                               ? 'Google: ${_linkedCalendarSummary!}'
                                               : 'Google linked')
                                           : 'Import Google Calendar',
@@ -1448,7 +1528,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                                 );
 
                                 Widget addBtn() => ElevatedButton.icon(
-                                  onPressed: _openManualAdd,
+                                  onPressed: _tryAddEvent,
                                   icon: const Icon(Icons.add, size: 18),
                                   label: const Text('Add Event'),
                                   style: _pillBtn(),

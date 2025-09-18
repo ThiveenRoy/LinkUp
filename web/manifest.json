@@ -8,6 +8,7 @@
     "description": "Plan together. Stress less. Link Up Calendar lets you share events, coordinate schedules, and collaborate with friends, family, or teams — for free, on any device.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "gcm_sender_id": "103953800507",
     "icons": [
         {
             "src": "icons/Icon-192.png",
@@ -32,4 +33,5 @@
             "purpose": "maskable"
         }
     ]
+    
 }

@@ -53,6 +53,9 @@ dependencies:
   path_provider: ^2.1.4 
   file_picker: ^8.0.0
   flex_color_picker: ^3.5.0
+  firebase_messaging: ^14.9.2
+  flutter_local_notifications: ^17.2.3  # for foreground + scheduled local reminders
+  permission_handler: ^11.3.1
 
 
 

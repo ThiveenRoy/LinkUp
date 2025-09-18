@@ -1,29 +1,35 @@
 // lib/screens/settings_screen.dart
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
+
+// Firebase & permissions
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:permission_handler/permission_handler.dart';
+
 import '../widgets/glass.dart';
 
 class SettingsScreen extends StatefulWidget {
-  // ======= Appearance inputs =======
+  // ===== Appearance inputs =====
   final ThemeMode themeMode;
   final Color accentColor;
 
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final ValueChanged<Color> onAccentChanged;
 
-  // ======= About inputs =======
+  // ===== About inputs =====
   final String appName;      // e.g. "LinkUp Calendar"
   final String appVersion;   // e.g. "v1.0.0"
   final String createdBy;    // e.g. "Your Name / Team"
 
   const SettingsScreen({
     super.key,
-    // Appearance
     this.themeMode = ThemeMode.system,
     this.accentColor = const Color(0xFF6750A4),
     required this.onThemeModeChanged,
     required this.onAccentChanged,
-    // About
     required this.appName,
     required this.appVersion,
     required this.createdBy,
@@ -37,7 +43,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late ThemeMode _mode = widget.themeMode;
   late Color _accent = widget.accentColor;
 
-  // Simple curated palette that matches Material tones nicely.
+  // Simple curated palette
   static const _swatches = <Color>[
     Color(0xFF6750A4), // purple
     Color(0xFF386A20), // green
@@ -48,6 +54,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Color(0xFF6C2A6A), // plum
     Color(0xFF4E5B62), // slate
   ];
+
+  // ===== Notifications helpers =====
+
+  bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+
+  CollectionReference<Map<String, dynamic>> get _users =>
+      FirebaseFirestore.instance.collection('users');
+
+  /// ANDROID: enable push, request permission (Android 13+), store FCM token
+  Future<void> _enablePushAndroid(String uid) async {
+    if (!_isAndroid) return;
+
+    final status = await Permission.notification.request();
+    if (!status.isGranted) return;
+
+    final token = await FirebaseMessaging.instance.getToken();
+    if (token != null) {
+      await _users.doc(uid).collection('tokens').doc(token).set({
+        'platform': 'android',
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+
+    FirebaseMessaging.instance.onTokenRefresh.listen((t) async {
+      await _users.doc(uid).collection('tokens').doc(t).set({
+        'platform': 'android',
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    });
+
+    await _users.doc(uid).set({
+      'notif': {'pushEnabled': true}
+    }, SetOptions(merge: true));
+  }
+
+  /// ANDROID: disable push, remove all android tokens
+  Future<void> _disablePushAndroid(String uid) async {
+    final toks = await _users.doc(uid).collection('tokens').get();
+    for (final d in toks.docs) {
+      if ((d.data()['platform'] as String?) == 'android') {
+        await d.reference.delete();
+      }
+    }
+    await _users.doc(uid).set({
+      'notif': {'pushEnabled': false}
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> _setEmailPref(String uid, bool enabled) async {
+    await _users.doc(uid).set({
+      'notif': {'emailEnabled': enabled}
+    }, SetOptions(merge: true));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -140,7 +199,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               boxShadow: [
                 BoxShadow(
                   blurRadius: 8,
-                  spreadRadius: 0,
                   offset: const Offset(0, 2),
                   color: Colors.black.withOpacity(0.15),
                 ),
@@ -153,7 +211,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return Wrap(
         children: [
           for (final c in _swatches) swatch(c),
-          // “Custom…” chip – opens wheel + sliders dialog
           InkWell(
             borderRadius: BorderRadius.circular(999),
             onTap: () async {
@@ -211,12 +268,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     }
 
+    // ===== Notifications section (Android push + email only) =====
+    Widget notificationsSection() {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        return const ListTile(
+          leading: Icon(Icons.lock),
+          title: Text('Sign in to manage notifications'),
+        );
+      }
+      final uid = user.uid;
+      final doc = _users.doc(uid);
+
+      return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: doc.snapshots(),
+        builder: (context, snap) {
+          final data  = snap.data?.data() ?? {};
+          final notif = (data['notif'] as Map<String, dynamic>?) ?? {};
+          final pushEnabled  = (notif['pushEnabled']  as bool?) ?? false; // Android
+          final emailEnabled = (notif['emailEnabled'] as bool?) ?? true;
+
+          return Column(
+            children: [
+              // Android push toggle
+              SwitchListTile(
+                title: const Text('Push notifications (Android)'),
+                subtitle: Text(
+                  _isAndroid
+                      ? 'Get alerts on this device when events are added.'
+                      : 'Push is available on Android devices only.',
+                ),
+                value: pushEnabled,
+                onChanged: (v) async {
+                  if (!_isAndroid) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Push is only available on Android.')),
+                    );
+                    return;
+                  }
+                  if (v) {
+                    await _enablePushAndroid(uid);
+                  } else {
+                    await _disablePushAndroid(uid);
+                  }
+                },
+              ),
+
+              // Email toggle (all platforms)
+              SwitchListTile(
+                title: const Text('Email notifications'),
+                subtitle: const Text('We’ll email you when events are added.'),
+                value: emailEnabled,
+                onChanged: (v) => _setEmailPref(uid, v),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.only(top: 8, bottom: 24),
           children: [
+            section('Notifications', [notificationsSection()]),
             section('Appearance', [
               const SizedBox(height: 4),
               Text('Theme', style: tt.labelLarge?.copyWith(
@@ -240,7 +357,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ===== Custom color dialog (Color wheel + Brightness + RGB sliders) =====
+  // ===== Custom color dialog (HSV wheel + sliders) =====
   Future<Color?> _pickCustomColor(BuildContext ctx, Color start) async {
     return showDialog<Color>(
       context: ctx,
@@ -250,7 +367,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final tt = Theme.of(ctx).textTheme;
         final isDark = Theme.of(ctx).brightness == Brightness.dark;
 
-        // Local color state (HSV + RGB mirrors)
         HSVColor hsv = HSVColor.fromColor(start);
         double r = start.red.toDouble();
         double g = start.green.toDouble();
@@ -329,16 +445,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(height: 12),
 
-                      // 🎯 Color wheel (Hue+Saturation)
+                      // Color wheel (Hue + Saturation)
                       _ColorWheel(
                         size: 220,
-                        hsv: hsv.withValue(1.0),   // draw wheel at full V
+                        hsv: hsv.withValue(1.0),
                         onChanged: (v) => _fromHSV(setD, v.withValue(hsv.value)),
                       ),
 
                       const SizedBox(height: 8),
 
-                      // Brightness (Value)
+                      // Brightness
                       Row(
                         children: [
                           SizedBox(width: 18, child: Text('V', style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w700))),
@@ -354,7 +470,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ],
                       ),
 
-                      // RGB (optional, stays in sync)
+                      // RGB (optional)
                       _rgbSlider('R', r, (v) => r = v, setD),
                       _rgbSlider('G', g, (v) => g = v, setD),
                       _rgbSlider('B', b, (v) => b = v, setD),
@@ -390,7 +506,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 /// ===== Lightweight HSV color wheel (no packages) =====
 class _ColorWheel extends StatelessWidget {
   final double size;               // diameter
-  final HSVColor hsv;              // uses hue & saturation; value is controlled outside
+  final HSVColor hsv;              // hue & saturation; value controlled outside
   final ValueChanged<HSVColor> onChanged;
 
   const _ColorWheel({
@@ -401,11 +517,7 @@ class _ColorWheel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _WheelCore(
-      size: size,
-      hsv: hsv,
-      onChanged: onChanged,
-    );
+    return _WheelCore(size: size, hsv: hsv, onChanged: onChanged);
   }
 }
 
@@ -475,30 +587,24 @@ class _WheelPainter extends CustomPainter {
     for (int i = 0; i <= 360; i += 12) {
       hueColors.add(HSVColor.fromAHSV(1, i.toDouble(), 1, 1).toColor());
     }
-    final sweep = Paint()
-      ..shader = SweepGradient(colors: hueColors).createShader(rect);
+    final sweep = Paint()..shader = SweepGradient(colors: hueColors).createShader(rect);
     canvas.drawCircle(size.center(Offset.zero), radius, sweep);
 
     // 2) Saturation fade to white in the middle
     final sat = Paint()
-      ..shader = RadialGradient(
+      ..shader = const RadialGradient(
         colors: [Colors.white, Colors.transparent],
-        stops: const [0.0, 1.0],
+        stops: [0.0, 1.0],
       ).createShader(rect);
     canvas.drawCircle(size.center(Offset.zero), radius, sat);
 
-    // 3) Thumb showing current H/S
+    // 3) Thumb
     final angle = (hsv.hue / 360.0) * math.pi * 2;
     final r = hsv.saturation * radius;
     final cx = size.width / 2 + r * math.cos(angle);
     final cy = size.height / 2 + r * math.sin(angle);
-    final thumb = Paint()
-      ..style = PaintingStyle.fill
-      ..color = hsv.toColor();
-    final ring = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..color = Colors.black.withOpacity(0.7);
+    final thumb = Paint()..style = PaintingStyle.fill..color = hsv.toColor();
+    final ring  = Paint()..style = PaintingStyle.stroke..strokeWidth = 2.0..color = Colors.black.withOpacity(0.7);
     canvas.drawCircle(Offset(cx, cy), 8, thumb);
     canvas.drawCircle(Offset(cx, cy), 8, ring);
   }

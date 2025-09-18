@@ -21,14 +21,14 @@ import 'theme/app_theme.dart';
 
 // 👇 add this
 
-
 Future<String> _computeInitialRoute() async {
   final prefs = await SharedPreferences.getInstance();
   final firebaseUser = FirebaseAuth.instance.currentUser;
   final seenTutorial = prefs.getBool('seenTutorial') ?? false;
 
   // Respect actual browser URL (Flutter Web)
-  final incomingRoute = WidgetsBinding.instance.platformDispatcher.defaultRouteName;
+  final incomingRoute =
+      WidgetsBinding.instance.platformDispatcher.defaultRouteName;
   if (incomingRoute.startsWith('/cal/')) {
     return incomingRoute; // deep link to invite
   }
@@ -57,10 +57,10 @@ void main() async {
 class WebScrollBehavior extends MaterialScrollBehavior {
   @override
   Set<PointerDeviceKind> get dragDevices => {
-        PointerDeviceKind.touch,
-        PointerDeviceKind.mouse,
-        PointerDeviceKind.trackpad,
-      };
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+  };
 }
 
 class MyApp extends StatelessWidget {
@@ -85,10 +85,13 @@ class MyApp extends StatelessWidget {
           darkTheme: buildDarkTheme(theme.seedColor),
 
           // 👇 Mount the wallpaper once for the whole app
-          builder: (context, child) => ThemeBg(
-            controller: theme,
-            child: child ?? const SizedBox.shrink(),
-          ),
+          builder:
+              (context, child) => ThemeBg(
+                bytes: theme.wallpaperBytes, // if you keep bytes in memory
+                // or:
+                // path: theme.wallpaperPath,         // if you store a file path on mobile
+                child: child ?? const SizedBox.shrink(),
+              ),
 
           initialRoute: initialRoute,
 
@@ -107,12 +110,13 @@ class MyApp extends StatelessWidget {
             if (settings.name == '/calendarHome') {
               final args = settings.arguments as Map<String, dynamic>?;
               return MaterialPageRoute(
-                builder: (_) => CalendarHomeScreen(
-                  theme: theme, // pass controller so Settings can modify it
-                  calendarId: args?['calendarId'],
-                  calendarName: args?['calendarName'] ?? 'LinkUp Calendar',
-                  tabIndex: args?['tabIndex'] ?? 0,
-                ),
+                builder:
+                    (_) => CalendarHomeScreen(
+                      theme: theme, // pass controller so Settings can modify it
+                      calendarId: args?['calendarId'],
+                      calendarName: args?['calendarName'] ?? 'LinkUp Calendar',
+                      tabIndex: args?['tabIndex'] ?? 0,
+                    ),
                 settings: settings,
               );
             }
@@ -126,7 +130,8 @@ class MyApp extends StatelessWidget {
             '/masterCalendar': (context) => const MasterCalendarScreen(),
             '/sharedCalendar': (context) {
               final args =
-                  ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
+                  ModalRoute.of(context)!.settings.arguments
+                      as Map<String, dynamic>?;
               return SharedCalendarScreen(
                 calendarId: args?['calendarId'],
                 calendarName: args?['calendarName'],
@@ -176,7 +181,8 @@ class _InviteGateState extends State<InviteGate> {
         if (data['sharedLinkEdit'] == widget.sharedLinkId ||
             data['sharedLinkView'] == widget.sharedLinkId) {
           final calendarId = doc.id;
-          final linkGrantsEdit = (data['sharedLinkEdit'] == widget.sharedLinkId);
+          final linkGrantsEdit =
+              (data['sharedLinkEdit'] == widget.sharedLinkId);
           await prefs.setString('pendingSharedCalendarId', calendarId);
           await prefs.setBool('editAccess_$calendarId', linkGrantsEdit);
           break;
@@ -200,3 +206,4 @@ class _InviteGateState extends State<InviteGate> {
     return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }
+ 

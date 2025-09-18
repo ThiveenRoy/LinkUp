@@ -1,54 +1,43 @@
-// lib/widgets/theme_bg.dart
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/material.dart';
-import '../theme/theme_controller.dart';
+// lib/theme/theme_bg.dart
+import 'dart:typed_data';
+import 'package:flutter/widgets.dart';
 
-// Conditional helper so web builds don't import dart:io
-import '../widgets/theme_bg_stub.dart' if (dart.library.io) 'theme_bg_io.dart';
+// Choose IO (Android/iOS/desktop) or stub (web) at build time.
+import 'theme_bg_impl_stub.dart'
+  if (dart.library.io) 'theme_bg_impl_io.dart' as impl;
 
+// --- function APIs (existing calls keep working) ---
+Widget buildWallpaperFromPath(String? path, BoxFit fit) =>
+    impl.buildWallpaperFromPath(path, fit);
+
+Widget buildWallpaperFromBytes(Uint8List? bytes, BoxFit fit) =>
+    impl.buildWallpaperFromBytes(bytes, fit);
+
+// --- Widget wrapper so you can use ThemeBg(...) in widgets ---
 class ThemeBg extends StatelessWidget {
-  final ThemeController controller;
+  /// Provide either [bytes] OR [path]. If both are set, [bytes] wins.
+  final Uint8List? bytes;
+  final String? path;
+  final BoxFit fit;
   final Widget child;
 
-  const ThemeBg({super.key, required this.controller, required this.child});
+  const ThemeBg({
+    super.key,
+    this.bytes,
+    this.path,
+    this.fit = BoxFit.cover,
+    required this.child,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller, // <- rebuild when theme changes
-      builder: (_, __) {
-        final fit = controller.wallpaperFit;
-        final dim = controller.wallpaperDim;
+    final bg = bytes != null
+        ? buildWallpaperFromBytes(bytes, fit)
+        : buildWallpaperFromPath(path, fit);
 
-        Image? img;
-        if (kIsWeb) {
-          final bytes = controller.wallpaperBytes;
-          if (bytes != null && bytes.isNotEmpty) {
-            img = Image.memory(
-              bytes,
-              fit: fit,
-              width: double.infinity,
-              height: double.infinity,
-              gaplessPlayback: true,
-              filterQuality: FilterQuality.low,
-            );
-          }
-        } else {
-          // implemented in theme_bg_io.dart (only on mobile/desktop)
-          img = buildWallpaperFromPath(controller.wallpaperPath, fit);
-        }
-
-        if (img == null) return child;
-
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            img,
-            Container(color: Colors.black.withOpacity(dim)), // dim overlay
-            child,
-          ],
-        );
-      },
+    return Stack(
+      fit: StackFit.expand,
+      children: [bg, child],
     );
   }
 }

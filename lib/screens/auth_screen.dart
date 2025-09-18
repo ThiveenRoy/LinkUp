@@ -11,16 +11,10 @@ class AuthLandingScreen extends StatefulWidget {
   const AuthLandingScreen({super.key});
 
   @override
-  _AuthLandingScreenState createState() => _AuthLandingScreenState();
+  State<AuthLandingScreen> createState() => _AuthLandingScreenState();
 }
 
 class _AuthLandingScreenState extends State<AuthLandingScreen> {
-  @override
-  void initState() {
-    super.initState();
-    _checkCurrentIdentity();
-  }
-
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -28,7 +22,14 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
   bool isLogin = false;
   String? error;
 
-  // ---------- helper: themed asset (adds _dark before extension in dark mode) ----------
+  @override
+  void initState() {
+    super.initState();
+    _checkCurrentIdentity();
+  }
+
+  // --- Utilities -------------------------------------------------------------
+
   String _themedAsset(BuildContext context, String path) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     if (!isDark) return path;
@@ -37,20 +38,17 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
     return '${path.substring(0, dot)}_dark${path.substring(dot)}';
   }
 
-  /// 🔍 Check Firestore for seenTutorial flag
   Future<bool> _getServerSeenTutorialIfAny() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return false;
     try {
-      final snap =
-          await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      final snap = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       return (snap.data()?['seenTutorial'] == true);
     } catch (_) {
       return false;
     }
   }
 
-  /// 🔁 Post-auth redirect (Invite takes precedence)
   Future<void> _handlePostLoginRedirect() async {
     final prefs = await SharedPreferences.getInstance();
     final pendingInviteId = prefs.getString('pendingInviteId');
@@ -65,12 +63,9 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
     if (inviteId != null) {
       await prefs.remove('pendingInviteId');
       await prefs.remove('pendingSharedCalendarId');
-
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => JoinCalendarScreen(sharedLinkId: inviteId),
-        ),
+        MaterialPageRoute(builder: (_) => JoinCalendarScreen(sharedLinkId: inviteId)),
       );
       return;
     }
@@ -79,15 +74,10 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
     Navigator.pushNamed(
       context,
       '/calendarHome',
-      arguments: {
-        'calendarId': null,
-        'calendarName': 'LinkUp Calendar',
-        'tabIndex': 0,
-      },
+      arguments: {'calendarId': null, 'calendarName': 'LinkUp Calendar', 'tabIndex': 0},
     );
   }
 
-  /// Convenience: check if an invite is pending right now
   Future<bool> _hasPendingInvite() async {
     final prefs = await SharedPreferences.getInstance();
     final a = prefs.getString('pendingInviteId');
@@ -95,14 +85,55 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
     return (a != null && a.isNotEmpty) || (b != null && b.isNotEmpty);
   }
 
+  /// Upsert the user's Firestore doc so `email` is never null.
+  Future<void> _ensureUserDoc(
+  User user, {
+  String? overrideEmail,
+  String? overrideDisplayName,
+  String? overridePhotoURL,
+}) async {
+  final ref = FirebaseFirestore.instance.collection('users').doc(user.uid);
+  final snap = await ref.get();
+  final existing = snap.data();
+
+  // Try the best email we can find
+  String? effectiveEmail = overrideEmail ?? user.email;
+  effectiveEmail ??= user.providerData
+      .map((p) => p.email)
+      .firstWhere((e) => e != null && e.isNotEmpty, orElse: () => null);
+
+  final effectiveName =
+      overrideDisplayName ?? user.displayName ?? effectiveEmail?.split('@').first;
+  final effectivePhoto =
+      overridePhotoURL ?? user.photoURL ?? user.providerData.firstOrNull?.photoURL;
+
+  await ref.set({
+    'displayName': effectiveName,
+    'email': effectiveEmail,                // <-- will no longer stay null
+    'photoURL': effectivePhoto,
+    'seenTutorial': existing?['seenTutorial'] ?? false,
+    'notif': {
+      'emailEnabled': (existing?['notif']?['emailEnabled'] as bool?) ?? true,
+      'pushEnabled': (existing?['notif']?['pushEnabled'] as bool?) ?? false,
+    },
+    'updatedAt': FieldValue.serverTimestamp(),
+  }, SetOptions(merge: true));
+}
+
+
+  // --- Identity check / first load ------------------------------------------
+
   void _checkCurrentIdentity() async {
     final prefs = await SharedPreferences.getInstance();
     final user = FirebaseAuth.instance.currentUser;
-    bool seenTutorialLocal = prefs.getBool('seenTutorial') ?? false;
 
-    // If logged in, consult server flag and sync local cache.
+    bool seenTutorialLocal = prefs.getBool('seenTutorial') ?? false;
     bool seenTutorialServer = false;
+
     if (user != null) {
+      // Make sure the Firestore doc exists and has email.
+      await _ensureUserDoc(user);
+
       seenTutorialServer = await _getServerSeenTutorialIfAny();
       if (seenTutorialServer && !seenTutorialLocal) {
         await prefs.setBool('seenTutorial', true);
@@ -111,19 +142,14 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
     }
 
     final isAuthed = (user != null);
-
     if (isAuthed) {
       setState(() => isLogin = true);
-
       WidgetsBinding.instance.addPostFrameCallback((_) async {
-        // 🚨 Invite should always take precedence over onboarding
         if (await _hasPendingInvite()) {
           await _handlePostLoginRedirect();
           return;
         }
-
         final shouldSkip = seenTutorialServer || seenTutorialLocal;
-
         if (shouldSkip) {
           await _handlePostLoginRedirect();
         } else {
@@ -135,6 +161,8 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       setState(() => isLogin = false);
     }
   }
+
+  // --- Email/password flow ---------------------------------------------------
 
   Future<void> _loginOrSignUp() async {
     bool justSignedUp = false;
@@ -150,26 +178,18 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       final password = _passwordController.text.trim();
 
       if (isLogin) {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: email,
-          password: password,
-        );
+        await FirebaseAuth.instance.signInWithEmailAndPassword(email: email, password: password);
       } else {
         try {
-          await FirebaseAuth.instance.createUserWithEmailAndPassword(
-            email: email,
-            password: password,
-          );
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(email: email, password: password);
           justSignedUp = true;
         } on FirebaseAuthException catch (e) {
           if (e.code == 'email-already-in-use') {
-            final methods =
-                await FirebaseAuth.instance.fetchSignInMethodsForEmail(email);
+            final methods = await FirebaseAuth.instance.fetchSignInMethodsForEmail(email);
             final msg = methods.contains('google.com')
                 ? "This email is registered via Google. Use Google Sign-In."
                 : "Email already in use. Try Google Sign-In.";
-            ScaffoldMessenger.of(context)
-                .showSnackBar(SnackBar(content: Text(msg)));
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
             setState(() => isLoading = false);
             return;
           } else {
@@ -182,9 +202,14 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
         }
       }
 
+      // Ensure user doc (email etc.) exists after any successful auth.
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await _ensureUserDoc(user);
+      }
+
       final prefs = await SharedPreferences.getInstance();
 
-      // ✅ Brand-new account → onboarding (no server flag yet)
       if (justSignedUp) {
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/onboarding');
@@ -192,17 +217,15 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
         return;
       }
 
-      // 🚨 If we came from an invite, ALWAYS skip onboarding and go to Join
       if (await _hasPendingInvite()) {
         await _handlePostLoginRedirect();
         setState(() => isLoading = false);
         return;
       }
 
-      // Otherwise, use server flag to decide onboarding
       final serverSeen = await _getServerSeenTutorialIfAny();
       if (serverSeen) {
-        await prefs.setBool('seenTutorial', true); // keep local in sync
+        await prefs.setBool('seenTutorial', true);
         await _handlePostLoginRedirect();
       } else {
         if (!mounted) return;
@@ -217,7 +240,8 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
     }
   }
 
-  /// Google sign-in (links if a legacy anonymous session somehow exists)
+  // --- Google Sign-in --------------------------------------------------------
+
   Future<void> _signInWithGoogle() async {
     setState(() {
       isLoading = true;
@@ -237,19 +261,27 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
       );
 
       if (auth.currentUser?.isAnonymous == true) {
-        // Legacy upgrade path: keep the same UID
         await auth.currentUser!.linkWithCredential(credential);
       } else {
         await auth.signInWithCredential(credential);
       }
 
-      // 🚨 If we came from an invite, ALWAYS skip onboarding and go to Join
+      // Ensure user doc exists/updated with email.
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await _ensureUserDoc(
+          user,
+          overrideEmail:       account.email,        // ✅ make email non-null
+          overrideDisplayName: account.displayName,
+          overridePhotoURL:    account.photoUrl,     // String? from GoogleSignInAccount
+        );
+      }
+
       if (await _hasPendingInvite()) {
         await _handlePostLoginRedirect();
         return;
       }
 
-      // Otherwise use server flag
       final prefs = await SharedPreferences.getInstance();
       final serverSeen = await _getServerSeenTutorialIfAny();
       if (serverSeen) {
@@ -268,6 +300,8 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
     }
   }
 
+  // --- UI --------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 700;
@@ -279,10 +313,9 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
                 Expanded(child: _buildFormLayout()),
                 Expanded(
                   child: Container(
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       image: DecorationImage(
-                        image:
-                        AssetImage('assets/bg_login.png'),
+                        image: AssetImage('assets/bg_login.png'),
                         fit: BoxFit.cover,
                       ),
                     ),
@@ -302,11 +335,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 🔄 uses logo_final_dark.png automatically in dark theme
-              Image.asset(
-                _themedAsset(context, 'assets/logo_final.png'),
-                height: 170,
-              ),
+              Image.asset(_themedAsset(context, 'assets/logo_final.png'), height: 170),
               const SizedBox(height: 32),
               _buildLoginForm(),
             ],
@@ -328,9 +357,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
         children: [
           Text(
             isLogin ? 'Welcome Back' : 'Let’s Get Started',
-            style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ) ??
+            style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold) ??
                 const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
@@ -343,6 +370,7 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 24),
+
           if (error != null)
             Card(
               color: Colors.red[100],
@@ -352,29 +380,20 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
                   children: [
                     Icon(Icons.error, color: Colors.red[700]),
                     const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        error!,
-                        style: TextStyle(color: Colors.red[900]),
-                      ),
-                    ),
+                    Expanded(child: Text(error!, style: TextStyle(color: Colors.red[900]))),
                   ],
                 ),
               ),
             ),
+
           const SizedBox(height: 8),
           TextFormField(
             controller: _emailController,
-            decoration: const InputDecoration(
-              labelText: 'Email',
-              border: OutlineInputBorder(),
-            ),
+            decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder()),
             validator: (value) {
               final trimmed = value?.trim() ?? '';
               if (trimmed.isEmpty) return 'Email is required';
-              final emailRegex = RegExp(
-                r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
-              );
+              final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
               if (!emailRegex.hasMatch(trimmed)) return 'Enter a valid email';
               return null;
             },
@@ -383,62 +402,44 @@ class _AuthLandingScreenState extends State<AuthLandingScreen> {
           TextFormField(
             controller: _passwordController,
             obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'Password',
-              border: OutlineInputBorder(),
-            ),
-            validator: (value) =>
-                value == null || value.length < 6 ? 'Minimum 6 characters' : null,
+            decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder()),
+            validator: (value) => value == null || value.length < 6 ? 'Minimum 6 characters' : null,
           ),
           const SizedBox(height: 24),
 
-          // Buttons styled from theme for better dark-mode contrast
           ElevatedButton(
             onPressed: isLoading ? null : _loginOrSignUp,
             style: ElevatedButton.styleFrom(
               backgroundColor: cs.primary,
               foregroundColor: cs.onPrimary,
               padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
             ),
             child: isLoading
                 ? CircularProgressIndicator(color: cs.onPrimary)
                 : Text(isLogin ? 'Login' : 'Sign Up'),
           ),
           const SizedBox(height: 12),
+
           ElevatedButton(
             onPressed: isLoading ? null : _signInWithGoogle,
             style: ElevatedButton.styleFrom(
               backgroundColor: cs.secondaryContainer,
               foregroundColor: cs.onSecondaryContainer,
               padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
             ),
             child: const Row(
               mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.g_mobiledata),
-                SizedBox(width: 8),
-                Text('Login with Google'),
-              ],
+              children: [Icon(Icons.g_mobiledata), SizedBox(width: 8), Text('Login with Google')],
             ),
           ),
           const SizedBox(height: 16),
 
           TextButton(
-            style: TextButton.styleFrom(
-              foregroundColor: isDark ? Colors.white : Colors.black,
-            ),
+            style: TextButton.styleFrom(foregroundColor: isDark ? Colors.white : Colors.black),
             onPressed: () => setState(() => isLogin = !isLogin),
-            child: Text(
-              isLogin
-                  ? "Don't have an account? Sign up"
-                  : "Already have an account? Login",
-            ),
+            child: Text(isLogin ? "Don't have an account? Sign up" : "Already have an account? Login"),
           ),
         ],
       ),

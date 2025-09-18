@@ -5,7 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:linkup_calendar/utils/pick_wallpaper_web.dart';
+import 'package:linkup_calendar/utils/pick_wallpaper.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/theme_controller.dart';
@@ -154,7 +154,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
     try {
       if (kIsWeb) {
         // No plugin on web
-        final bytes = await pickWallpaperBytesWeb();
+        final bytes = await pickWallpaperBytes();
         if (bytes == null) return;
         await t.setWallpaperBytes(bytes);
         return;
