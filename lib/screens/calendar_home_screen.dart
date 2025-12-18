@@ -243,7 +243,7 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
 
               // about
               appName: 'LinkUp Calendar',
-              appVersion: 'v1.0.0',
+              appVersion: 'v1.1.0',
               createdBy: 'Thiveen Roy',
             ),
       ),

@@ -15,6 +15,9 @@ import 'screens/onboarding_screen.dart';
 import 'screens/join_calendar_screen.dart';
 import 'screens/shared_calendar_screen.dart';
 import 'screens/paywall_screen.dart';
+import 'screens/terms_screen.dart';
+import 'screens/privacy_screen.dart';
+
 
 // THEME
 import 'theme/theme_controller.dart';
@@ -129,6 +132,8 @@ class MyApp extends StatelessWidget {
             '/': (context) => AuthLandingScreen(),
             '/onboarding': (context) => const OnboardingScreen(),
             '/billing': (context) => const PaywallScreen(),
+            '/terms': (_) => const TermsScreen(),
+            '/privacy': (_) => const PrivacyScreen(),
             '/masterCalendar': (context) => const MasterCalendarScreen(),
             '/sharedCalendar': (context) {
               final args =

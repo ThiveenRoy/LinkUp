@@ -20,9 +20,6 @@ class PaywallScreen extends StatelessWidget {
   static const String kFunctionsBaseUrl =
       'https://asia-southeast1-shared-calendar-5958a.cloudfunctions.net';
 
-  static final Uri termsUrl = Uri.parse("https://linkupcalendar.app/terms");
-  static final Uri privacyUrl = Uri.parse("https://linkupcalendar.app/privacy");
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -145,19 +142,14 @@ class PaywallScreen extends StatelessWidget {
                       onPressed: () => _onRestore(context),
                     ),
                     TextButton(
-                      onPressed: () => launchUrl(
-                        termsUrl,
-                        mode: LaunchMode.externalApplication,
-                      ),
+                      onPressed: () => Navigator.pushNamed(context, '/terms'),
                       child: const Text('Terms'),
                     ),
                     TextButton(
-                      onPressed: () => launchUrl(
-                        privacyUrl,
-                        mode: LaunchMode.externalApplication,
-                      ),
+                      onPressed: () => Navigator.pushNamed(context, '/privacy'),
                       child: const Text('Privacy'),
                     ),
+                  
                   ],
                 ),
               ],
@@ -397,11 +389,11 @@ class _Comparison extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    TableRow row(String f, String free, String pro) => TableRow(
+    TableRow row(String feature, String free, String premium) => TableRow(
           children: [
-            _cell(f),
+            _cell(feature),
             _cell(free),
-            _cell(pro, bold: true),
+            _cell(premium, bold: true),
           ],
         );
 
@@ -411,11 +403,19 @@ class _Comparison extends StatelessWidget {
         side: BorderSide(color: cs.outlineVariant),
       ),
       child: Table(
+        columnWidths: const {
+          0: FlexColumnWidth(2),
+          1: FlexColumnWidth(1.5),
+          2: FlexColumnWidth(1.5),
+        },
         children: [
           row('Shared calendars', 'Up to 2', 'Unlimited'),
-          row('Notifications', '—', '✓'),
-          row('Themes', 'Blue only', 'All'),
-          row('AI exports', '—', '✓'),
+          row('Themes', 'Default only', 'All + custom themes'),
+          row(
+            'Future features',
+            '—',
+            'Premium only',
+          ),
         ],
       ),
     );
@@ -425,7 +425,10 @@ class _Comparison extends StatelessWidget {
         padding: const EdgeInsets.all(12),
         child: Text(
           text,
-          style: TextStyle(fontWeight: bold ? FontWeight.bold : null),
+          style: TextStyle(
+            fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
+          ),
         ),
       );
 }
+

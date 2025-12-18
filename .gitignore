@@ -14,6 +14,8 @@ migrate_working_dir/
 .dart_tool/
 firebase.json
 lib\firebase_options.dart
+firebase-debug.log
+functions/firebase-debug.log
 
 # IntelliJ related
 *.iml
