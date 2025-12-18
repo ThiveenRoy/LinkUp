@@ -1730,7 +1730,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                 icon: const Icon(Icons.share, size: 18),
                 label: const Text('Collaborative Calendar'),
                 style: TextButton.styleFrom(
-                  foregroundColor: cs.primary,
+                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 ),
                 onPressed: () => _showShareModal(widget.calendarId!),
@@ -2204,7 +2204,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodyMedium?.copyWith(
                             fontWeight: FontWeight.w600,
-                            color: cs.primary,
+                            color: Colors.white,
                           ),
                         ),
                       ],
@@ -2643,3 +2643,4 @@ class _WheelPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _WheelPainter old) => old.hsv != hsv;
 }
+ 

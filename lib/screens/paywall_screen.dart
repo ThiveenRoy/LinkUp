@@ -1,15 +1,27 @@
 // lib/screens/paywall_screen.dart
+
+import 'dart:convert';
 import 'package:flutter/foundation.dart'
     show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class PaywallScreen extends StatelessWidget {
-  final VoidCallback? onPurchased; // call after successful purchase if you want
+  final VoidCallback? onPurchased;
 
   const PaywallScreen({super.key, this.onPurchased});
 
   bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
   bool get _isIOS => defaultTargetPlatform == TargetPlatform.iOS;
+
+  static const String kFunctionsBaseUrl =
+      'https://asia-southeast1-shared-calendar-5958a.cloudfunctions.net';
+
+  static final Uri termsUrl = Uri.parse("https://linkupcalendar.app/terms");
+  static final Uri privacyUrl = Uri.parse("https://linkupcalendar.app/privacy");
 
   @override
   Widget build(BuildContext context) {
@@ -17,15 +29,13 @@ class PaywallScreen extends StatelessWidget {
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
 
-    // Platform-aware copy
-    final String ctaText =
-        kIsWeb
-            ? 'Continue to Checkout'
-            : _isAndroid
+    final String ctaText = kIsWeb
+        ? 'Continue to Checkout'
+        : _isAndroid
             ? 'Upgrade with Google Play'
             : _isIOS
-            ? 'Upgrade with App Store'
-            : 'Upgrade';
+                ? 'Upgrade with App Store'
+                : 'Upgrade';
 
     return Scaffold(
       appBar: AppBar(title: const Text('Go Premium')),
@@ -37,16 +47,15 @@ class PaywallScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Header
                 Row(
                   children: [
-                    Icon(Icons.workspace_premium, color: Colors.amber.shade600),
+                    Icon(Icons.workspace_premium,
+                        color: Colors.amber.shade600),
                     const SizedBox(width: 8),
                     Text(
                       'Premium',
-                      style: tt.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: tt.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                   ],
                 ),
@@ -57,110 +66,96 @@ class PaywallScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 24),
 
-                // Plans row (Monthly / Lifetime). Hook these to Stripe/Play later.
-                // Plans row (Monthly / Lifetime)
-LayoutBuilder(
-  builder: (ctx, c) {
-    final isNarrow = c.maxWidth < 760;
+                // =========================
+                // RESPONSIVE PLAN CARDS
+                // =========================
+                LayoutBuilder(
+                  builder: (_, c) {
+                    final isNarrow = c.maxWidth < 760;
 
-    final row = Flex(
-      direction: isNarrow ? Axis.vertical : Axis.horizontal,
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment:
-          isNarrow ? CrossAxisAlignment.stretch : CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          flex: isNarrow ? 0 : 1,
-          child: _PlanCard(
-            title: 'Monthly',
-            price: '\$2.99',
-            subtext: 'Billed monthly, cancel anytime',
-            highlight: false,
-            features: const [
-              'Unlimited shared calendars',
-              'Notifications & reminders',
-              'All themes & accent colors',
-              'Future AI summaries & exports',
-            ],
-            onPressed: () => _handleUpgrade(context, plan: 'monthly'),
-            ctaText: kIsWeb
-                ? 'Continue to Checkout'
-                : _isAndroid
-                    ? 'Upgrade with Google Play'
-                    : _isIOS
-                        ? 'Upgrade with App Store'
-                        : 'Upgrade',
-          ),
-        ),
-        SizedBox(width: isNarrow ? 0 : 16, height: isNarrow ? 16 : 0),
-        Expanded(
-          flex: isNarrow ? 0 : 1,
-          child: _PlanCard(
-            title: 'Lifetime',
-            price: '\$14.99',
-            subtext: 'One-time purchase',
-            highlight: true,
-            ribbon: 'Most Popular',
-            features: const [
-              'One payment, premium forever',
-              'Unlimited shared calendars',
-              'Notifications & reminders',
-              'All themes & accent colors',
-            ],
-            onPressed: () => _handleUpgrade(context, plan: 'lifetime'),
-            ctaText: kIsWeb
-                ? 'Continue to Checkout'
-                : _isAndroid
-                    ? 'Upgrade with Google Play'
-                    : _isIOS
-                        ? 'Upgrade with App Store'
-                        : 'Upgrade',
-          ),
-        ),
-      ],
-    );
+                    final monthly = _PlanCard(
+                      title: 'Monthly',
+                      price: '\$2.99',
+                      subtext: 'Billed monthly, cancel anytime',
+                      features: const [
+                        'Unlimited shared calendars',
+                        'Notifications & reminders',
+                        'All themes & accent colors',
+                        'Future AI summaries & exports',
+                      ],
+                      onPressed: () =>
+                          _handleUpgrade(context, plan: 'monthly'),
+                      ctaText: ctaText,
+                    );
 
-    // Force both children to share tallest height in horizontal layout
-    return isNarrow ? row : IntrinsicHeight(child: row);
-  },
-),
+                    final yearly = _PlanCard(
+                      title: 'Yearly',
+                      price: '\$29.99',
+                      subtext: 'One-time yearly billing',
+                      highlight: true,
+                      ribbon: 'Best Value',
+                      features: const [
+                        'Unlimited shared calendars',
+                        'Notifications & reminders',
+                        'All themes & accent colors',
+                      ],
+                      onPressed: () =>
+                          _handleUpgrade(context, plan: 'yearly'),
+                      ctaText: ctaText,
+                    );
 
+                    if (isNarrow) {
+                      return Column(
+                        children: [
+                          monthly,
+                          const SizedBox(height: 16),
+                          yearly,
+                        ],
+                      );
+                    }
 
-                const SizedBox(height: 28),
+                    return IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(child: monthly),
+                          const SizedBox(width: 16),
+                          Expanded(child: yearly),
+                        ],
+                      ),
+                    );
+                  },
+                ),
 
-                // Comparison table (Free vs Premium)
-                _Comparison(),
-
+                const SizedBox(height: 32),
+                const _Comparison(),
                 const SizedBox(height: 24),
 
-                // Restore + legal
+                // =========================
+                // FOOTER
+                // =========================
                 Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
+                  spacing: 14,
+                  runSpacing: 14,
                   alignment: WrapAlignment.center,
                   children: [
                     OutlinedButton.icon(
-                      icon: const Icon(Icons.refresh),
+                      icon: Icon(Icons.refresh, color: cs.primary),
                       label: const Text('Restore purchases'),
-                      onPressed: () {
-                        // TODO:
-                        // - Web: open Stripe Customer Portal OR re-check Firestore entitlement
-                        // - Android/iOS: in_app_purchase.restorePurchases()
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Restore coming soon.')),
-                        );
-                      },
+                      onPressed: () => _onRestore(context),
                     ),
                     TextButton(
-                      onPressed: () {
-                        // TODO: open your TOS/Privacy URLs
-                      },
+                      onPressed: () => launchUrl(
+                        termsUrl,
+                        mode: LaunchMode.externalApplication,
+                      ),
                       child: const Text('Terms'),
                     ),
                     TextButton(
-                      onPressed: () {
-                        // TODO: open your TOS/Privacy URLs
-                      },
+                      onPressed: () => launchUrl(
+                        privacyUrl,
+                        mode: LaunchMode.externalApplication,
+                      ),
                       child: const Text('Privacy'),
                     ),
                   ],
@@ -173,36 +168,124 @@ LayoutBuilder(
     );
   }
 
-  void _handleUpgrade(BuildContext context, {required String plan}) async {
-    // Wire these later:
-    // - Web: call Cloud Function createCheckoutSession(priceId) -> redirect to Stripe
-    // - Android: in_app_purchase flow
-    // - iOS: in_app_purchase flow
-    // For now: just show a placeholder.
+  // ================================
+  // WEB CHECKOUT
+  // ================================
+  Future<void> _handleUpgrade(BuildContext context,
+    {required String plan}) async {
+  if (!kIsWeb) {
+    // mobile placeholder unchanged
     showDialog(
       context: context,
-      builder:
-          (_) => AlertDialog(
-            title: const Text('Upgrade'),
-            content: Text(
-              kIsWeb
-                  ? 'Web checkout (Stripe) placeholder for "$plan".'
-                  : _isAndroid
-                  ? 'Google Play Billing placeholder for "$plan".'
-                  : _isIOS
-                  ? 'App Store placeholder for "$plan".'
-                  : 'Upgrade placeholder for "$plan".',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
+      builder: (_) => const AlertDialog(
+        title: Text('Upgrade'),
+        content: Text('Mobile billing coming soon.'),
+      ),
+    );
+    return;
+  }
+
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please sign in first.')),
+    );
+    return;
+  }
+
+  try {
+    debugPrint('🟡 Checkout clicked ($plan)');
+
+    final idToken = await user.getIdToken(true);
+    final origin = Uri.base.origin;
+
+    final resp = await http.post(
+      Uri.parse('$kFunctionsBaseUrl/createCheckoutSession'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $idToken',
+      },
+      body: jsonEncode({
+        'plan': plan,
+        'successUrl': '$origin/billing/success',
+        'cancelUrl': '$origin/billing/cancel',
+      }),
+    );
+
+    debugPrint('🟢 Status: ${resp.statusCode}');
+    debugPrint('🟢 Body: ${resp.body}');
+
+    if (resp.statusCode != 200) {
+      throw Exception('Server error ${resp.statusCode}');
+    }
+
+    final data = jsonDecode(resp.body);
+    final url = data['url'];
+
+    if (url == null) {
+      throw Exception('No checkout URL returned');
+    }
+
+    final uri = Uri.parse(url);
+
+    final launched = await launchUrl(
+      uri,
+      webOnlyWindowName: '_self',
+      mode: LaunchMode.platformDefault,
+    );
+
+    if (!launched) {
+      throw Exception('Failed to launch checkout URL');
+    }
+  } catch (e, st) {
+    debugPrint('🔴 Checkout failed');
+    debugPrint(e.toString());
+    debugPrintStack(stackTrace: st);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Checkout failed: $e'),
+        duration: const Duration(seconds: 6),
+      ),
     );
   }
 }
+
+
+  // ================================
+  // RESTORE
+  // ================================
+  Future<void> _onRestore(BuildContext context) async {
+    if (!kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Restore coming soon on mobile.')),
+      );
+      return;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final snap = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    if (snap.data()?['premium'] == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Premium restored.')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No purchases found.')),
+      );
+    }
+  }
+}
+
+/* ================================
+   PLAN CARD
+================================ */
 
 class _PlanCard extends StatelessWidget {
   final String title;
@@ -231,68 +314,47 @@ class _PlanCard extends StatelessWidget {
     final tt = Theme.of(context).textTheme;
 
     return Container(
-      // Optional: pick a sensible floor so ultra-short content still looks nice
-      constraints: const BoxConstraints(minHeight: 320),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: cs.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: highlight ? cs.primary : cs.outlineVariant, width: 1),
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-            color: Colors.black.withOpacity(0.18),
-          ),
-        ],
+        border: Border.all(
+          color: highlight ? cs.primary : cs.outlineVariant,
+        ),
       ),
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (ribbon != null)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: cs.primaryContainer,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(
-                ribbon!,
-                style: tt.labelSmall?.copyWith(
-                  color: cs.onPrimaryContainer,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              child: Text(ribbon!,
+                  style: tt.labelSmall?.copyWith(
+                      fontWeight: FontWeight.bold)),
             ),
           if (ribbon != null) const SizedBox(height: 8),
 
-          Text(title, style: tt.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
+          Text(title,
+              style: tt.titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
 
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(price, style: tt.displaySmall?.copyWith(fontWeight: FontWeight.w800)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(subtext, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-              ),
-            ],
-          ),
+          Text('$price • $subtext',
+              style:
+                  tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
 
-          const SizedBox(height: 14),
-
-          // Features block
+          const SizedBox(height: 16),
           ...features.map((f) => _FeatLine(text: f)),
 
-          // Push the CTA to the bottom
-          const Spacer(),
-
-          const SizedBox(height: 8),
-
+          const SizedBox(height: 24),
           SizedBox(
             width: double.infinity,
-            height: 44, // consistent button height across cards
+            height: 46,
             child: FilledButton(
               onPressed: onPressed,
               child: Text(ctaText),
@@ -307,6 +369,7 @@ class _PlanCard extends StatelessWidget {
 class _FeatLine extends StatelessWidget {
   final String text;
   const _FeatLine({required this.text});
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -314,7 +377,7 @@ class _FeatLine extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Icon(Icons.check_circle, color: cs.primary, size: 18),
+          Icon(Icons.check_circle, size: 18, color: cs.primary),
           const SizedBox(width: 8),
           Expanded(child: Text(text)),
         ],
@@ -323,81 +386,46 @@ class _FeatLine extends StatelessWidget {
   }
 }
 
+/* ================================
+   COMPARISON
+================================ */
+
 class _Comparison extends StatelessWidget {
+  const _Comparison();
+
   @override
   Widget build(BuildContext context) {
-    final tt = Theme.of(context).textTheme;
     final cs = Theme.of(context).colorScheme;
 
-    TableRow row(String feature, String free, String pro) => TableRow(
-      children: [
-        Padding(padding: const EdgeInsets.all(12), child: Text(feature)),
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text(
-            free,
-            style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text(
-            pro,
-            style: tt.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
-          ),
-        ),
-      ],
-    );
+    TableRow row(String f, String free, String pro) => TableRow(
+          children: [
+            _cell(f),
+            _cell(free),
+            _cell(pro, bold: true),
+          ],
+        );
 
     return Card(
-      elevation: 0,
-      color: cs.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(color: cs.outlineVariant),
       ),
       child: Table(
-        columnWidths: const {
-          0: FlexColumnWidth(2.0),
-          1: FlexColumnWidth(1.2),
-          2: FlexColumnWidth(1.2),
-        },
-        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
         children: [
-          TableRow(
-            decoration: BoxDecoration(
-              color: cs.secondaryContainer.withOpacity(0.35),
-            ),
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(12),
-                child: Text(
-                  'Feature',
-                  style: TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.all(12),
-                child: Text(
-                  'Free',
-                  style: TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.all(12),
-                child: Text(
-                  'Premium',
-                  style: TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-            ],
-          ),
           row('Shared calendars', 'Up to 2', 'Unlimited'),
-          row('Notifications & reminders', '—', '✓'),
-          row('Themes & accent colors', 'Blue only', 'All colors + custom'),
-          row('AI summaries & exports', '—', '✓'),
+          row('Notifications', '—', '✓'),
+          row('Themes', 'Blue only', 'All'),
+          row('AI exports', '—', '✓'),
         ],
       ),
     );
   }
+
+  Widget _cell(String text, {bool bold = false}) => Padding(
+        padding: const EdgeInsets.all(12),
+        child: Text(
+          text,
+          style: TextStyle(fontWeight: bold ? FontWeight.bold : null),
+        ),
+      );
 }

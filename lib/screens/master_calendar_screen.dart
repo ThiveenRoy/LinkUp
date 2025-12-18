@@ -10,6 +10,8 @@
 //  - GlassPanel applied to calendar frame and event cards
 //  - NEW: per-user hide for shared events (no destructive deletes from shared)
 
+// lib/screens/master_calendar_screen.dart
+
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -18,6 +20,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:googleapis/calendar/v3.dart' as gcal;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../common/event_crud.dart';
 import '../services/google_sync.dart';
@@ -25,7 +28,7 @@ import '../widgets/glass.dart';
 
 enum _AgendaView { day, month }
 
-// ----- shared glass tuning (kept identical to Shared screen)
+// ----- shared glass tuning
 class _GlassVars {
   final double blur, opacity, accentOpacity, borderWidth, shadowOpacity;
   const _GlassVars({
@@ -60,20 +63,20 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
   DateTime _selectedDay = DateTime.now();
   _AgendaView _agendaView = _AgendaView.day;
 
-  // Rendering data
   Map<DateTime, List<Map<String, dynamic>>> _events = {};
   Map<String, Color> _eventColors = {};
   bool _loading = true;
 
-  String? _masterCalendarId; // calendars/{id}
+  String? _masterCalendarId;
 
-  // per-user hidden refs (calendarId::eventId)
   final Set<String> _hiddenEventRefs = {};
 
-  // ---------- Google state ----------
   bool _googleSyncEnabled = false;
   String? _linkedCalendarSummary;
   bool _googleSignedIn = false;
+
+  // 🔔 NEW: release note guard
+  bool _checkedReleaseNote = false;
 
   @override
   void initState() {
@@ -88,23 +91,57 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
       return;
     }
+
     await _ensureUserHasMasterCalendar();
     await _initMasterId();
-    await _loadGoogleCfg(); // Firestore only; no auth popup
-    await _loadHiddenEvents(); // <- load personal hides
+    await _loadGoogleCfg();
+    await _loadHiddenEvents();
     await _loadEvents();
+
+    // 🔔 NEW
+    await _maybeShowReleaseNote();
+  }
+
+  // 🔔 NEW: Release note logic
+  Future<void> _maybeShowReleaseNote() async {
+    if (_checkedReleaseNote || !mounted) return;
+    _checkedReleaseNote = true;
+
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final ref =
+        FirebaseFirestore.instance.collection('users').doc(uid);
+
+    final snap = await ref.get();
+    final data = snap.data() ?? {};
+
+    final bool hasSeen = data['hasSeenReleaseNote'] == true;
+    if (hasSeen) return;
+
+    final bool isNewUser =
+        data['createdAt'] == null && data['seenTutorial'] != true;
+
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ReleaseNoteDialog(isNewUser: isNewUser),
+    );
+
+    await ref.set({
+      'hasSeenReleaseNote': true,
+      'seenReleaseNoteAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   // ---------- helpers ----------
-  void _toast(
-    String msg, {
-    IconData? icon,
-    Color? color,
-    SnackBarAction? action,
-  }) {
+  void _toast(String msg,
+      {IconData? icon, Color? color, SnackBarAction? action}) {
     final cs = Theme.of(context).colorScheme;
     final bg = color ?? cs.primary;
     final on = cs.onPrimary;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
@@ -500,6 +537,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
       _loading = false;
     });
   }
+
 
   // ---------- GOOGLE: session / actions ----------
   Future<bool> _ensureGoogleSession() async {
@@ -1568,7 +1606,7 @@ class _MasterCalendarScreenState extends State<MasterCalendarScreen> {
                               overflow: TextOverflow.ellipsis,
                               style: tt.bodyMedium?.copyWith(
                                 fontWeight: FontWeight.w600,
-                                color: cs.primary,
+                                color: Colors.white,
                               ),
                             ),
                           ],
@@ -1854,3 +1892,104 @@ class _PreviewSelectSheetState extends State<_PreviewSelectSheet> {
     );
   }
 }
+
+class _ReleaseNoteDialog extends StatelessWidget {
+  final bool isNewUser;
+  const _ReleaseNoteDialog({required this.isNewUser});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Title
+            Text(
+              isNewUser ? 'Welcome to LinkUp 🎉' : 'Thanks for supporting LinkUp 💙',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Body
+            Text(
+              'We’ve rolled out a new update with some exciting improvements:',
+              style: theme.textTheme.bodyMedium,
+            ),
+
+            const SizedBox(height: 10),
+
+            _bullet('✨ New Premium features'),
+            _bullet('📧 Email notifications for calendar updates'),
+            _bullet('🛠 Minor bug fixes & performance improvements'),
+
+            const SizedBox(height: 14),
+
+            // Feedback link
+            GestureDetector(
+              onTap: () async {
+                final url = Uri.parse(
+                  'https://forms.gle/4z9tgTW5gthn41m68',
+                );
+                if (await canLaunchUrl(url)) {
+                  await launchUrl(url, mode: LaunchMode.externalApplication);
+                }
+              },
+              child: Text(
+                '💬 Help us improve — share your feedback',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: cs.primary,
+                  decoration: TextDecoration.underline,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Action
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: cs.primary,
+                  foregroundColor: cs.onPrimary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Got it'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _bullet(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('•  '),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
+}
+
+
+

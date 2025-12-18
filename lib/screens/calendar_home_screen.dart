@@ -1,11 +1,13 @@
 // lib/screens/calendar_home_screen.dart
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:linkup_calendar/utils/pick_wallpaper.dart';
+import 'package:linkup_calendar/widgets/glass.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/theme_controller.dart';
@@ -13,6 +15,8 @@ import 'master_calendar_screen.dart';
 import 'settings_screen.dart';
 import 'shared_calendar_list.dart';
 import 'shared_calendar_screen.dart';
+import 'dart:html' as html;
+
 
 class CalendarHomeScreen extends StatefulWidget {
   final String? calendarId;
@@ -45,6 +49,9 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _handlePostPurchasePopup();
+    });
     _tabController = TabController(
       length: 2,
       vsync: this,
@@ -63,6 +70,110 @@ class _CalendarHomeScreenState extends State<CalendarHomeScreen>
 
     _maybeShowTutorialOnce();
   }
+  void _handlePostPurchasePopup() async {
+  final uri = Uri.base.toString();
+
+  // Only trigger when arriving from Stripe success URL
+  final fromSuccess = uri.contains("billing/success");
+
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
+
+  final userRef = FirebaseFirestore.instance.collection("users").doc(user.uid);
+  final snap = await userRef.get();
+  final data = snap.data() ?? {};
+
+  final isPremium = data["premium"] == true;
+  final shouldShow = data["showPremiumWelcome"] == true;
+
+  if (fromSuccess && isPremium && shouldShow) {
+    // Remove the ugly URL before showing popup
+    html.window.history.replaceState(null, "LinkUp", "/#/calendarHome");
+
+    // Show popup AFTER the UI is fully stable
+    Future.delayed(const Duration(milliseconds: 400), () {
+      _showPremiumWelcomePopup();
+    });
+
+    // Prevent future popups
+    await userRef.update({"showPremiumWelcome": false});
+  }
+}
+
+  void _checkPurchaseStatus() async {
+    final uri = Uri.base;
+
+    // Stripe will redirect without query params in Flutter Web with hash routing,
+    // so instead check if premium was just enabled.
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final docRef =
+        FirebaseFirestore.instance.collection("users").doc(user.uid);
+    final snap = await docRef.get();
+    final data = snap.data() ?? {};
+
+    final isPremium = data["premium"] == true;
+    final shouldShow = data["showPremiumWelcome"] == true;
+
+    if (isPremium && shouldShow) {
+      // 1) Show popup
+      _showPremiumWelcomePopup();
+
+      // 2) Disable future popups
+      await docRef.update({"showPremiumWelcome": false});
+    }
+  }
+
+  void _showPremiumWelcomePopup() {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) {
+        final cs = Theme.of(context).colorScheme;
+        final tt = Theme.of(context).textTheme;
+
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: GlassPanel(
+            radius: const BorderRadius.all(Radius.circular(20)),
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+            blur: 20,
+            opacity: 0.10,
+            accentBorder: true,
+            accentOpacity: 0.20,
+            borderWidth: 1.2,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.workspace_premium, size: 42, color: cs.primary),
+                const SizedBox(height: 12),
+                Text("Thank You for Upgrading!",
+                    style: tt.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    )),
+                const SizedBox(height: 8),
+                Text(
+                  "Your upgrade helps us improve LinkUp Calendar.\n"
+                  "We'll continue building better features for you!",
+                  textAlign: TextAlign.center,
+                  style: tt.bodyMedium?.copyWith(height: 1.4),
+                ),
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Continue"),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+
 
   Future<void> _maybeShowTutorialOnce() async {
     final prefs = await SharedPreferences.getInstance();
