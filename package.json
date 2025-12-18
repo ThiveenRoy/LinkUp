@@ -1,8 +1,0 @@
-{
-  "devDependencies": {
-    "eslint-plugin-import": "^2.32.0"
-  },
-  "dependencies": {
-    "stripe": "^12.18.0"
-  }
-}

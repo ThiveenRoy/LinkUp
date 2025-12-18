@@ -1,6 +1,0 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="LinkUp Calendar (debug)">
-        <!-- Allow cleartext HTTP only in debug if you need local dev endpoints -->
-        <!-- <uses-library android:name="org.apache.http.legacy" android:required="false"/> -->
-    </application>
-</manifest>
