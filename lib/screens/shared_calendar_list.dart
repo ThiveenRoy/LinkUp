@@ -46,6 +46,9 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
     }
   }
 
+  // ------------------------------------------------------
+  // Load premium status (FIXED)
+  // ------------------------------------------------------
   Future<void> _loadPremiumStatus() async {
     final uid = _uid;
     if (uid == null) return;
@@ -58,7 +61,8 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
     if (!mounted) return;
 
     setState(() {
-      isPremiumUser = snap.data()?['isPremium'] == true;
+      // ✅ MUST match Firestore + SettingsScreen
+      isPremiumUser = snap.data()?['premium'] == true;
     });
   }
 
@@ -125,7 +129,6 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
   int _ownedSharedCalendarCount(List<Map<String, dynamic>> calendars) {
     final uid = _uid;
     if (uid == null) return 0;
-
     return calendars.where((c) => c['ownerId'] == uid).length;
   }
 
@@ -140,14 +143,17 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
     final ownerName = calendar['ownerName'] ?? '';
 
     final isOwnerUpdate = updatedByUid == ownerId;
-    final baseName =
-        updatedByName.isNotEmpty ? updatedByName : ownerName.isNotEmpty ? ownerName : 'Unknown';
+    final baseName = updatedByName.isNotEmpty
+        ? updatedByName
+        : ownerName.isNotEmpty
+            ? ownerName
+            : 'Unknown';
 
     return 'Updated $when by ${isOwnerUpdate ? '$baseName (Owner)' : baseName}';
   }
 
   // ------------------------------------------------------
-  // UI
+  // Empty state
   // ------------------------------------------------------
   Widget _buildEmptyState(BuildContext context, int ownedCount) {
     final cs = Theme.of(context).colorScheme;
@@ -163,7 +169,8 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
               radius: const BorderRadius.all(Radius.circular(48)),
               padding: const EdgeInsets.all(20),
               blur: Theme.of(context).brightness == Brightness.dark ? 18 : 28,
-              opacity: Theme.of(context).brightness == Brightness.dark ? 0.10 : 0.05,
+              opacity:
+                  Theme.of(context).brightness == Brightness.dark ? 0.10 : 0.05,
               accentBorder: true,
               accentOpacity: 0.18,
               child: Icon(Icons.group_add_rounded, size: 56, color: cs.primary),
@@ -196,6 +203,9 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
     );
   }
 
+  // ------------------------------------------------------
+  // Build
+  // ------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     if (_uid == null) {
@@ -223,13 +233,13 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
                   itemCount: calendars.length,
                   itemBuilder: (context, index) {
                     final c = calendars[index];
-                    final isOwner = c['ownerId'] == _uid;
 
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: GlassPanel(
                         radius: const BorderRadius.all(Radius.circular(16)),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
                         blur: 22,
                         opacity: 0.06,
                         accentBorder: true,
@@ -237,9 +247,13 @@ class _SharedCalendarListState extends State<SharedCalendarList> {
                         child: ListTile(
                           title: Text(c['name']),
                           subtitle: Text(_subtitleForCalendar(c)),
-                          trailing: Icon(Icons.arrow_forward_ios_rounded,
-                              color: cs.primary, size: 18),
-                          onTap: () => widget.onSelect(c['id'], c['name']),
+                          trailing: Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            color: cs.primary,
+                            size: 18,
+                          ),
+                          onTap: () =>
+                              widget.onSelect(c['id'], c['name']),
                         ),
                       ),
                     );

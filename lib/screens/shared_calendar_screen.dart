@@ -1730,7 +1730,7 @@ class _SharedCalendarScreenState extends State<SharedCalendarScreen> {
                 icon: const Icon(Icons.share, size: 18),
                 label: const Text('Collaborative Calendar'),
                 style: TextButton.styleFrom(
-                  foregroundColor: Colors.white,
+                  foregroundColor: Theme.of(context).colorScheme.primary,
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 ),
                 onPressed: () => _showShareModal(widget.calendarId!),
